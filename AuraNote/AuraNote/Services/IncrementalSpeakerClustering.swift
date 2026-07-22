@@ -41,18 +41,17 @@ actor IncrementalSpeakerClustering {
         }
 
         if bestDist < mergeDistanceThreshold, bestIndex >= 0 {
-            // 合并到已有聚类，更新质心（移动平均）
+            // 合并到已有聚类：仅在高自信度 (dist < 0.35) 时更新质心，防止边缘交界声音污染主质心致男女声混淆
             var cluster = clusters[bestIndex]
             let newCount = cluster.count + 1
-            var newCentroid = cluster.centroid
-            for i in 0..<newCentroid.count {
-                newCentroid[i] = (cluster.centroid[i] * Float(cluster.count) + embedding[i]) / Float(newCount)
-            }
-            clusters[bestIndex] = (id: cluster.id, centroid: newCentroid, count: newCount)
-
-            // 周期性全量重聚类
-            if embeddingCount % 10 == 0 {
-                recluster()
+            if bestDist < 0.35 {
+                var newCentroid = cluster.centroid
+                for i in 0..<newCentroid.count {
+                    newCentroid[i] = (cluster.centroid[i] * Float(cluster.count) + embedding[i]) / Float(newCount)
+                }
+                clusters[bestIndex] = (id: cluster.id, centroid: newCentroid, count: newCount)
+            } else {
+                clusters[bestIndex] = (id: cluster.id, centroid: cluster.centroid, count: newCount)
             }
 
             AppLog.info("[Clustering] #\(embeddingCount) merged → \(cluster.id) (dist=\(String(format: "%.4f", bestDist)), clusterSize=\(newCount), totalClusters=\(clusters.count))")

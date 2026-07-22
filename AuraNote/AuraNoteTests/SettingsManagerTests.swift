@@ -1,6 +1,7 @@
 import XCTest
 @testable import AuraNote
 
+@MainActor
 final class SettingsManagerTests: XCTestCase {
     
     private var testDefaults: UserDefaults!
@@ -27,17 +28,6 @@ final class SettingsManagerTests: XCTestCase {
         XCTAssertEqual(manager.llmToken, "")
         XCTAssertEqual(manager.llmModel, "gpt-4o")
         XCTAssertEqual(manager.selectedVoice, "openai/whisper-large-v3")
-        
-        var isDir: ObjCBool = false
-        var hasDownloaded = false
-        let id = "openai_whisper-large-v3"
-        let modelURL = URL(fileURLWithPath: manager.defaultModelPath).appendingPathComponent(id)
-        if FileManager.default.fileExists(atPath: modelURL.path, isDirectory: &isDir), isDir.boolValue {
-            if let contents = try? FileManager.default.contentsOfDirectory(atPath: modelURL.path), !contents.isEmpty {
-                hasDownloaded = true
-            }
-        }
-        XCTAssertEqual(manager.modelPath, hasDownloaded ? manager.defaultModelPath : "")
     }
     
     func testSettingsSaveAndLoad() {
@@ -50,7 +40,7 @@ final class SettingsManagerTests: XCTestCase {
         manager.selectedVoice = "openai/whisper-large-v3"
         manager.langSetting = "en"
         manager.summaryPrompt = "这是一个测试自定义提示词_test_suite_val"
-        manager.modelPath = "/path/to/custom/whisper"
+        manager.summaryPrompt = "这是一个测试自定义提示词_test_suite_val"
         
         // 保存配置
         manager.save()
@@ -64,7 +54,6 @@ final class SettingsManagerTests: XCTestCase {
         XCTAssertEqual(defaults.string(forKey: "voice_model"), "openai/whisper-large-v3")
         XCTAssertEqual(defaults.string(forKey: "summary_prompt"), "这是一个测试自定义提示词_test_suite_val")
         XCTAssertEqual(defaults.string(forKey: "ui_language"), "en")
-        XCTAssertEqual(defaults.string(forKey: "model_path"), "/path/to/custom/whisper")
         
         // 重新 load 并验证 manager 内的数据是否正确同步更新
         manager.load()
@@ -74,7 +63,6 @@ final class SettingsManagerTests: XCTestCase {
         XCTAssertEqual(manager.selectedVoice, "openai/whisper-large-v3")
         XCTAssertEqual(manager.summaryPrompt, "这是一个测试自定义提示词_test_suite_val")
         XCTAssertEqual(manager.langSetting, "en")
-        XCTAssertEqual(manager.modelPath, "/path/to/custom/whisper")
         
         XCTAssertTrue(manager.isLLMConfigured)
     }

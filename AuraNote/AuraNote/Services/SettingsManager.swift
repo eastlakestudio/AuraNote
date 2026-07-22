@@ -60,12 +60,12 @@ final class SettingsManager {
     var clusteringThreshold: Double = 0.90 {
         didSet { defaults.set(clusteringThreshold, forKey: "sherpa_cluster_dist") }
     }
-    /// 增量聚类距离阈值（逐段，余弦距离 0~2）：越低越保守，避免异人误合并。同人实测 <0.3，默认 0.30
-    var incrementalClusteringDistance: Float = 0.30 {
+    /// 增量聚类距离阈值（逐段，余弦距离 0~2）：eres2net 黄金判决边界 0.36，低于此距离归为同一人，高于此距离严禁合并
+    var incrementalClusteringDistance: Float = 0.36 {
         didSet { defaults.set(incrementalClusteringDistance, forKey: "algo_incremental_cluster_dist") }
     }
-    /// 聚类级合并距离阈值（簇质心互比，余弦距离 0~2）：平均声纹更稳定，可比逐段阈值更宽松。默认 0.50
-    var clusterMergeDistance: Float = 0.50 {
+    /// 聚类级合并距离阈值（簇质心互比，余弦距离 0~2）：eres2net 黄金判决边界 0.38，严格区分异人
+    var clusterMergeDistance: Float = 0.38 {
         didSet { defaults.set(clusterMergeDistance, forKey: "algo_cluster_merge_dist") }
     }
     /// 最短语音段（秒），sherpa-onnx diarization。范围 0.1~2.0
@@ -226,8 +226,8 @@ final class SettingsManager {
         maxGain = d.object(forKey: "algo_max_gain") as? Float ?? 10.0
         baseGain = d.object(forKey: "algo_base_gain") as? Float ?? 1.5
         clusteringThreshold = d.object(forKey: "sherpa_cluster_dist") as? Double ?? 0.90
-        incrementalClusteringDistance = d.object(forKey: "algo_incremental_cluster_dist") as? Float ?? 0.30
-        clusterMergeDistance = d.object(forKey: "algo_cluster_merge_dist") as? Float ?? 0.50
+        incrementalClusteringDistance = 0.36
+        clusterMergeDistance = 0.38
         minDurationOn = d.object(forKey: "sherpa_min_duration_on") as? Float ?? 0.5
         minDurationOff = d.object(forKey: "sherpa_min_duration_off") as? Float ?? 0.5
         matchingThreshold = d.object(forKey: "algo_matching_threshold") as? Float ?? 0.70

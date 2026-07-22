@@ -671,38 +671,56 @@ final class RecordingViewModel {
 
                 let speakerCount = Set(diarOutput.segments.map(\.speakerId)).count
                 AppLog.info("[Diar] Voiceprint diarization result: \(speakerCount) speakers, \(diarOutput.segments.count) segments | config: incrClusterDist=\(SettingsManager.shared.incrementalClusteringDistance)")
-                // sharedState 已在 diarTask 中提前设置，此处只需处理后续匹配逻辑
+                
+                // 强制将收尾合并（mergeSimilarClusters）后的最终 segments 与 embeddings 写回 sharedState，消除临时 Speaker_C 等残留标签
+                await sharedState.setDiarization(diarOutput.segments, embeddings: diarOutput.embeddings)
+                
                 let matchEmbeddings = diarOutput.embeddings
                 self.lastDiarEmbeddings = matchEmbeddings
-                    // 立即保存声纹向量到数据库（防止重启丢失）
-                    do {
-                        try await self.databaseManager.saveMeetingEmbeddings(meetingId: meetingId, embeddings: matchEmbeddings)
-                    } catch {
-                        AppLog.error("[Diar] Failed to save meeting voiceprint vectors meeting=\(meetingId): \(error.localizedDescription)")
-                    }
+                // 立即保存声纹向量到数据库（防止重启丢失）
+                do {
+                    try await self.databaseManager.saveMeetingEmbeddings(meetingId: meetingId, embeddings: matchEmbeddings)
+                } catch {
+                    AppLog.error("[Diar] Failed to save meeting voiceprint vectors meeting=\(meetingId): \(error.localizedDescription)")
+                }
 
-                    // 声纹匹配：与已知联系人比对
-                    let allContacts = await self.databaseManager.fetchAllContacts()
-                    let knownContacts = await self.databaseManager.fetchContactsWithEmbeddings()
-                    AppLog.info("[Diar] Voiceprint matching: known contacts=\(allContacts.count)")
-                    var matchedSpeakerIds = Set<String>()
-                    if !knownContacts.isEmpty {
-                        let matchResult = SpeakerMatcher.match(embeddings: matchEmbeddings, against: knownContacts)
-                        matchedSpeakerIds = matchResult.matchedSpeakerIds
-                        var autoMap: [String: (name: String, contactId: String)] = [:]
-                        for (speakerId, match) in matchResult.highConfidence {
-                            autoMap[speakerId] = (name: match.name, contactId: match.contactId)
-                            do {
-                                let emb = diarOutput.embeddings[speakerId] ?? []
-                                try await self.databaseManager.saveContactEmbedding(contactId: match.contactId, embedding: emb)
-                            } catch {
-                                AppLog.error("[Diar] Failed to save contact voiceprint vectors contact=\(match.contactId): \(error.localizedDescription)")
+                // 声纹匹配：全量拉取通讯录与历史会议声纹特征档案
+                let referenceProfiles = await self.databaseManager.fetchAllKnownVoiceprintProfiles()
+                AppLog.info("[Diar] Voiceprint matching against all known profiles (count=\(referenceProfiles.count))")
+                
+                var matchedSpeakerIds = Set<String>()
+                if !referenceProfiles.isEmpty {
+                    let matchResult = SpeakerMatcher.match(embeddings: matchEmbeddings, against: referenceProfiles)
+                    matchedSpeakerIds = matchResult.matchedSpeakerIds
+                    
+                    var autoMap: [String: (name: String, contactId: String)] = [:]
+                    for (speakerId, match) in matchResult.highConfidence {
+                        autoMap[speakerId] = (name: match.name, contactId: match.contactId)
+                        do {
+                            let emb = diarOutput.embeddings[speakerId] ?? []
+                            if !emb.isEmpty {
+                                try await self.databaseManager.saveOrUpdateSpeakerContact(speakerId: match.contactId, name: match.name, embedding: emb)
                             }
+                        } catch {
+                            AppLog.error("[Diar] Failed to update contact voiceprint vectors contact=\(match.contactId): \(error.localizedDescription)")
                         }
-                        if !autoMap.isEmpty { await sharedState.setSpeakerMap(autoMap) }
                     }
-                    // 未匹配的临时 Speaker 后续转正
-                    await sharedState.setMatchedSpeakerIds(matchedSpeakerIds)
+                    if !autoMap.isEmpty { await sharedState.setSpeakerMap(autoMap) }
+                }
+
+                // 若 Speaker 在通讯录中不存在，立即自动存入通讯录，确保下一次直接匹配！
+                for (speakerId, emb) in matchEmbeddings {
+                    if !emb.isEmpty {
+                        do {
+                            try await self.databaseManager.saveOrUpdateSpeakerContact(speakerId: speakerId, name: speakerId, embedding: emb)
+                            AppLog.info("[Diar] Speaker '\(speakerId)' auto-saved to global contacts database")
+                        } catch {
+                            AppLog.error("[Diar] Failed to auto-save speaker \(speakerId) to contacts: \(error.localizedDescription)")
+                        }
+                    }
+                }
+
+                await sharedState.setMatchedSpeakerIds(matchedSpeakerIds)
 
                 // 等待消费者处理完回调发出的最后一批段
                 try? await Task.sleep(nanoseconds: 500_000_000)

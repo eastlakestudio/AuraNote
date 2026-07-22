@@ -213,4 +213,63 @@ extension DatabaseManager {
         }
         return nil
     }
+
+    /// 自动为 Speaker 创建或更新通讯录联系人并存入声纹特征向量
+    func saveOrUpdateSpeakerContact(speakerId: String, name: String, embedding: [Float]) throws {
+        let contact = Contact(
+            id: speakerId,
+            name: name,
+            role: nil,
+            company: nil,
+            avatarUrl: nil,
+            createdAt: Date(),
+            updatedAt: Date()
+        )
+        try saveContact(contact)
+        try saveContactEmbedding(contactId: speakerId, embedding: embedding)
+    }
+
+    /// 查出系统内所有的声纹档案（包含通讯录联系人及历史会议分析保存的声纹特征向量）
+    func fetchAllKnownVoiceprintProfiles() -> [VoiceprintProfile] {
+        var profiles: [VoiceprintProfile] = []
+        var existingIds = Set<String>()
+
+        // 1. 通讯录已有声纹的联系人
+        let contacts = fetchContactsWithEmbeddings()
+        for c in contacts {
+            profiles.append(VoiceprintProfile(id: c.id, name: c.name, embedding: c.embedding, sourceType: .contact))
+            existingIds.insert(c.id)
+            existingIds.insert(c.name)
+        }
+
+        // 2. 历史会议中保存的声纹向量 (meetings.embedding_blob)
+        let sql = "SELECT id, title, embedding_blob FROM meetings WHERE embedding_blob IS NOT NULL"
+        var stmt: OpaquePointer?
+        if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
+            defer { sqlite3_finalize(stmt) }
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                let meetingId = columnText(stmt, index: 0)
+                if let blob = sqlite3_column_blob(stmt, 2) {
+                    let count = Int(sqlite3_column_bytes(stmt, 2))
+                    let data = Data(bytes: blob, count: count)
+                    if let embs = try? JSONDecoder().decode([String: [Float]].self, from: data) {
+                        for (spkKey, emb) in embs where !emb.isEmpty {
+                            let profileId = "\(meetingId)_\(spkKey)"
+                            if !existingIds.contains(spkKey) && !existingIds.contains(profileId) {
+                                profiles.append(VoiceprintProfile(
+                                    id: profileId,
+                                    name: spkKey,
+                                    embedding: emb,
+                                    sourceType: .priorSession
+                                ))
+                                existingIds.insert(profileId)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        return profiles
+    }
 }

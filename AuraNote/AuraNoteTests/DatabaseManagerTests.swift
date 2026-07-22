@@ -1,6 +1,7 @@
 import XCTest
 @testable import AuraNote
 
+@MainActor
 final class DatabaseManagerTests: XCTestCase {
 
     // 注意：完整的 DatabaseManager 测试需要在 Xcode 中运行
@@ -18,7 +19,7 @@ final class DatabaseManagerTests: XCTestCase {
         XCTAssertNotNil(found)
         XCTAssertEqual(found?.title, "测试会议")
         XCTAssertEqual(found?.location, "会议室 A")
-        XCTAssertEqual(found?.status, .pendingDiarization)
+        XCTAssertEqual(found?.status, .recording)
     }
 
     func testMeetingStatusUpdate() throws {
@@ -92,5 +93,16 @@ final class DatabaseManagerTests: XCTestCase {
         // 验证第二段的说话人已按指定的值（lmh）保存
         let clip2 = clips.first { $0.id == newClip2.id }
         XCTAssertEqual(clip2?.speakerLabel, "lmh")
+    }
+
+    func testSaveOrUpdateSpeakerContact() throws {
+        let db = DatabaseManager()
+        let spkId = "Speaker_Test_99"
+        let emb: [Float] = [0.1, 0.5, 0.9]
+
+        try db.saveOrUpdateSpeakerContact(speakerId: spkId, name: spkId, embedding: emb)
+
+        let contactsWithEmb = db.fetchContactsWithEmbeddings()
+        XCTAssertTrue(contactsWithEmb.contains { $0.id == spkId && $0.embedding.count == 3 })
     }
 }

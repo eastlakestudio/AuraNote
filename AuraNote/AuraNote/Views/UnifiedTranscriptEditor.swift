@@ -71,6 +71,7 @@ struct UnifiedTranscriptEditor: View {
                         ForEach(displayedSegments, id: \.1.id) { displayedIdx, seg in
                             TranscriptRow(
                                 segment: seg,
+                                index: displayedIdx + 1,
                                 isFirst: displayedIdx == 0,
                                 isActive: seg.id == activeSegmentId,
                                 searchQuery: searchQuery,
@@ -191,6 +192,7 @@ struct UnifiedTranscriptEditor: View {
 
 struct TranscriptRow: View {
     let segment: TranscriptSegment
+    let index: Int
     let isFirst: Bool
     let isActive: Bool
     let searchQuery: String
@@ -223,8 +225,8 @@ struct TranscriptRow: View {
         return segment.id == fid
     }
 
-    init(segment: TranscriptSegment, isFirst: Bool, isActive: Bool, searchQuery: String = "", flashSegmentId: String? = nil, existingSpeakers: [String], attendees: [String], speakerColor: Color, onTextChange: @escaping (String) -> Void, onSpeakerChange: @escaping (String) -> Void, onMergeUp: @escaping () -> Void, onSplitAfter: @escaping (String) -> Void, onPlay: (() -> Void)? = nil, onFlashDone: (() -> Void)? = nil) {
-        self.segment = segment; self.isFirst = isFirst; self.isActive = isActive
+    init(segment: TranscriptSegment, index: Int, isFirst: Bool, isActive: Bool, searchQuery: String = "", flashSegmentId: String? = nil, existingSpeakers: [String], attendees: [String], speakerColor: Color, onTextChange: @escaping (String) -> Void, onSpeakerChange: @escaping (String) -> Void, onMergeUp: @escaping () -> Void, onSplitAfter: @escaping (String) -> Void, onPlay: (() -> Void)? = nil, onFlashDone: (() -> Void)? = nil) {
+        self.segment = segment; self.index = index; self.isFirst = isFirst; self.isActive = isActive
         self.searchQuery = searchQuery; self.flashSegmentId = flashSegmentId
         self.existingSpeakers = existingSpeakers; self.attendees = attendees; self.speakerColor = speakerColor
         self.onTextChange = onTextChange; self.onSpeakerChange = onSpeakerChange
@@ -234,8 +236,15 @@ struct TranscriptRow: View {
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            // 第一行：播放 + 时间 + 说话人 + 时长 + 合并
+            // 第一行：序号 + 播放 + 时间 + 说话人 + 时长 + 合并
             HStack(spacing: 6) {
+                Text("#\(index)")
+                    .font(.system(.caption, design: .monospaced, weight: .bold))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 4))
+
                 Button(action: { onPlay?() }) {
                     Image(systemName: "play.circle.fill").font(.caption).foregroundStyle(.blue)
                 }.buttonStyle(.plain).help(loc("play"))
@@ -294,6 +303,7 @@ struct TranscriptRow: View {
 
             // 第二行：文本（左对齐说话人标签位置）
             HStack(alignment: .top, spacing: 0) {
+                Spacer().frame(width: 32)  // # 序号标签宽度
                 Spacer().frame(width: 22)  // ▶ 按钮宽度
                 Spacer().frame(width: 42)  // 时间戳宽度
                 if segment.isPlaceholder {

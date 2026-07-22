@@ -57,6 +57,7 @@ enum AppLog {
             }
         }()
         let line = "[\(levelStr)] \(formatted)\n"
+        print(line, terminator: "")
 
         queue.async {
             let logURL = SettingsManager.shared.dataDirectory

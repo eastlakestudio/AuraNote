@@ -15,42 +15,41 @@ enum SpeakerAlignmentService {
 
         for i in 0..<results.count {
             let tSegment = results[i]
+            let dur = max(0.1, tSegment.endTime - tSegment.startTime)
+            
+            // 提纯核心说话区间：消除句首句尾 15% 容易与上一句擦边的边缘噪点
+            let trim = dur * 0.15
+            let coreStart = tSegment.startTime + trim
+            let coreEnd = tSegment.endTime - trim
+            let midPoint = (tSegment.startTime + tSegment.endTime) / 2.0
+
             var bestSpeaker: String?
-            var maxOverlap: Double = 0.0
-            var nearestDistance: Double = .infinity
-            var nearestSpeaker: String?
+            var maxWeightedScore: Double = -1.0
 
             for dSegment in diarization {
-                // 计算两个时间区间的重叠面积，优先选重叠最大的说话人
-                let overlapStart = max(tSegment.startTime, dSegment.startTime)
-                let overlapEnd = min(tSegment.endTime, dSegment.endTime)
+                // 1. 核心区间重叠
+                let cOverlapStart = max(coreStart, dSegment.startTime)
+                let cOverlapEnd = min(coreEnd, dSegment.endTime)
+                let coreOverlap = max(0.0, cOverlapEnd - cOverlapStart)
 
-                if overlapEnd > overlapStart {
-                    let overlapDuration = overlapEnd - overlapStart
-                    if overlapDuration > maxOverlap {
-                        maxOverlap = overlapDuration
-                        bestSpeaker = dSegment.speakerId
-                    }
-                }
+                // 2. 中心点命中 (Midpoint Containment)
+                let hitsMidpoint = (midPoint >= dSegment.startTime && midPoint <= dSegment.endTime) ? 1.0 : 0.0
 
-                // 计算时间距离，用于 fallback（如果没有任何重叠，找最近的说话人）
-                let distance: Double
-                if tSegment.endTime <= dSegment.startTime {
-                    distance = dSegment.startTime - tSegment.endTime
-                } else if tSegment.startTime >= dSegment.endTime {
-                    distance = tSegment.startTime - dSegment.endTime
-                } else {
-                    distance = 0
-                }
+                // 3. 全区间重叠
+                let fOverlapStart = max(tSegment.startTime, dSegment.startTime)
+                let fOverlapEnd = min(tSegment.endTime, dSegment.endTime)
+                let fullOverlap = max(0.0, fOverlapEnd - fOverlapStart)
 
-                if distance < nearestDistance {
-                    nearestDistance = distance
-                    nearestSpeaker = dSegment.speakerId
+                // 综合评分：核心区重叠权重 2.0，中点命中权重 0.5 * dur，全区重叠权重 0.5
+                let score = coreOverlap * 2.0 + (hitsMidpoint * 0.5 * dur) + fullOverlap * 0.5
+
+                if score > maxWeightedScore && fullOverlap >= 0.15 {
+                    maxWeightedScore = score
+                    bestSpeaker = dSegment.speakerId
                 }
             }
 
-            // 优先使用重叠面积最大的说话人，否则 fallback 到时间上最接近的说话人
-            if let speaker = bestSpeaker ?? nearestSpeaker {
+            if let speaker = bestSpeaker {
                 results[i].speakerLabel = speaker
             }
         }

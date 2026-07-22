@@ -327,15 +327,17 @@ actor DiarizationService {
             let startIdx = Int(seg.start * 16000)
             let endIdx = min(Int(seg.end * 16000), samples.count)
             guard startIdx < endIdx else {
+                AppLog.info("[DiarService] VAD Segment #\(i + 1)/\(vadSegments.count) [\(String(format: "%.2f", seg.start))s - \(String(format: "%.2f", seg.end))s] skipped (invalid sample bounds)")
                 skippedCount += 1
                 onEmbeddingProgress(i + 1, vadSegments.count)
                 continue
             }
-            let segSamples = Array(samples[startIdx..<endIdx])
-            let segDuration = Double(segSamples.count) / 16000.0
+            let segSamples = Self.prepareSamplesWithContext(allSamples: samples, startSec: seg.start, endSec: seg.end)
+            let segDuration = seg.end - seg.start
 
             // 跳过过短片段（< 0.3s，声纹不可靠）
             guard segDuration >= 0.3 else {
+                AppLog.info("[DiarService] VAD Segment #\(i + 1)/\(vadSegments.count) [\(String(format: "%.2f", seg.start))s - \(String(format: "%.2f", seg.end))s] (dur: \(String(format: "%.2f", segDuration))s) skipped (duration < 0.3s)")
                 skippedCount += 1
                 onEmbeddingProgress(i + 1, vadSegments.count)
                 continue
@@ -346,6 +348,8 @@ actor DiarizationService {
                 // 即时聚类：每提取一个 embedding 就归入聚类，无需等全部完成
                 let label = await clustering.addEmbedding(emb)
                 speakerEmbeddingLists[label, default: []].append(emb)
+
+                AppLog.info("[DiarService] VAD Segment #\(i + 1)/\(vadSegments.count) [\(String(format: "%.2f", seg.start))s - \(String(format: "%.2f", seg.end))s] (dur: \(String(format: "%.2f", segDuration))s) -> assigned to \(label)")
 
                 outputSegments.append(DiarizedSegment(
                     speakerId: label,
@@ -586,48 +590,123 @@ actor DiarizationService {
         var processedCount = 0
         var skippedCount = 0
     
-        /// 处理单个边界
+        var totalSegmentIndex = 0
+        /// 处理单个边界（统一滑窗提取，不设长短特例判断，精细匹配会议整理界面的每一行分行）
         func processOne(_ segStart: Double, _ segEnd: Double) async {
+            totalSegmentIndex += 1
+            let segIndex = totalSegmentIndex
             let startIdx = Int(segStart * 16000)
             let endIdx = min(Int(segEnd * 16000), samples.count)
             guard startIdx < endIdx else {
+                AppLog.info("[DiarService] Whisper/VAD Segment #\(segIndex) [\(String(format: "%.2f", segStart))s - \(String(format: "%.2f", segEnd))s] skipped (invalid sample bounds)")
                 skippedCount += 1
                 return
             }
-            let segSamples = Array(samples[startIdx..<endIdx])
-            let segDuration = Double(segSamples.count) / 16000.0
+            let segSamples = Self.prepareSamplesWithContext(allSamples: samples, startSec: segStart, endSec: segEnd)
+            let segDuration = segEnd - segStart
             guard segDuration >= 0.3 else {
+                AppLog.info("[DiarService] Whisper/VAD Segment #\(segIndex) [\(String(format: "%.2f", segStart))s - \(String(format: "%.2f", segEnd))s] (dur: \(String(format: "%.2f", segDuration))s) skipped (duration < 0.3s)")
                 skippedCount += 1
                 return
             }
-            do {
-                let emb = try extractor.extractEmbedding(samples: segSamples, sampleRate: 16000)
-                let label = await clustering.addEmbedding(emb)
-                speakerEmbeddingLists[label, default: []].append(emb)
-    
-                outputSegments.append(DiarizedSegment(
-                    speakerId: label,
-                    startTime: segStart,
-                    endTime: segEnd
-                ))
-    
-                // 计算平均声纹
-                var incrementalEmbs: [String: [Float]] = [:]
-                for (spk, embs) in speakerEmbeddingLists where !embs.isEmpty {
-                    let dim = embs[0].count
-                    var avg = [Float](repeating: 0, count: dim)
-                    for e in embs {
-                        for j in 0..<dim { avg[j] += e[j] }
-                    }
-                    for j in 0..<dim { avg[j] /= Float(embs.count) }
-                    incrementalEmbs[spk] = avg
+
+            let windowSec = 1.6
+            let stepSec = 0.8
+
+            var subSegments: [(label: String, start: Double, end: Double)] = []
+
+            if segDuration <= windowSec {
+                // 时长小于窗口，使用上下文填充后的 1.6s 音频提取稳健声纹
+                do {
+                    let emb = try extractor.extractEmbedding(samples: segSamples, sampleRate: 16000)
+                    let label = await clustering.addEmbedding(emb)
+                    speakerEmbeddingLists[label, default: []].append(emb)
+                    subSegments.append((label: label, start: segStart, end: segEnd))
+                } catch {
+                    AppLog.warn("[DiarService] embedding extraction failed for segment \(segIndex): \(error)")
+                    skippedCount += 1
+                    return
                 }
-                await onIncrementalResult(outputSegments, incrementalEmbs)
-                processedCount += 1
-            } catch {
-                AppLog.warn("[DiarService] embedding extraction failed for segment \(processedCount): \(error)")
-                skippedCount += 1
+            } else {
+                // 时长大于窗口，按 1.6s 窗口、0.8s 步长滑动提取
+                var currStart = segStart
+                while currStart < segEnd {
+                    let currEnd = min(currStart + windowSec, segEnd)
+                    if (currEnd - currStart) >= 0.3 {
+                        let winSamples = Self.prepareSamplesWithContext(allSamples: samples, startSec: currStart, endSec: currEnd)
+                        if let emb = try? extractor.extractEmbedding(samples: winSamples, sampleRate: 16000) {
+                            let label = await clustering.addEmbedding(emb)
+                            speakerEmbeddingLists[label, default: []].append(emb)
+                            subSegments.append((label: label, start: currStart, end: currEnd))
+                        }
+                    }
+
+                    if currEnd >= segEnd { break }
+                    currStart += stepSec
+                }
             }
+
+            if subSegments.isEmpty {
+                skippedCount += 1
+                return
+            }
+
+            // 合并连续相同 Speaker 的窗口区间
+            var mergedSub: [DiarizedSegment] = []
+            for sub in subSegments {
+                if let last = mergedSub.last, last.speakerId == sub.label {
+                    mergedSub[mergedSub.count - 1] = DiarizedSegment(speakerId: last.speakerId, startTime: last.startTime, endTime: sub.end)
+                } else {
+                    mergedSub.append(DiarizedSegment(speakerId: sub.label, startTime: sub.start, endTime: sub.end))
+                }
+            }
+
+            // 孤立短标签平滑过滤（Smoothing Filter）：消除 < 0.8s 瞬时噪点引致的切分变异
+            var smoothedSub: [DiarizedSegment] = []
+            var sIdx = 0
+            while sIdx < mergedSub.count {
+                let current = mergedSub[sIdx]
+                let dur = current.endTime - current.startTime
+                if dur < 0.8 && sIdx > 0 && sIdx < mergedSub.count - 1 {
+                    let prev = mergedSub[sIdx - 1]
+                    let next = mergedSub[sIdx + 1]
+                    if prev.speakerId == next.speakerId {
+                        let updatedPrev = DiarizedSegment(speakerId: prev.speakerId, startTime: prev.startTime, endTime: current.endTime)
+                        smoothedSub[smoothedSub.count - 1] = updatedPrev
+                        sIdx += 1
+                        continue
+                    }
+                }
+                smoothedSub.append(current)
+                sIdx += 1
+            }
+            mergedSub = smoothedSub
+
+            if !mergedSub.isEmpty {
+                let first = mergedSub.first!
+                mergedSub[0] = DiarizedSegment(speakerId: first.speakerId, startTime: segStart, endTime: first.endTime)
+                let last = mergedSub.last!
+                mergedSub[mergedSub.count - 1] = DiarizedSegment(speakerId: last.speakerId, startTime: last.startTime, endTime: segEnd)
+            }
+
+            outputSegments.append(contentsOf: mergedSub)
+
+            let spkList = mergedSub.map { "\($0.speakerId)[\(String(format: "%.2f", $0.startTime))s-\(String(format: "%.2f", $0.endTime))s]" }.joined(separator: ", ")
+            AppLog.info("[DiarService] Whisper/VAD Segment #\(segIndex) [\(String(format: "%.2f", segStart))s - \(String(format: "%.2f", segEnd))s] (dur: \(String(format: "%.2f", segDuration))s) -> \(mergedSub.count) speaker intervals: \(spkList)")
+            processedCount += 1
+
+            // 计算当前各 Speaker 的平均声纹并回调
+            var incrementalEmbs: [String: [Float]] = [:]
+            for (spk, embs) in speakerEmbeddingLists where !embs.isEmpty {
+                let dim = embs[0].count
+                var avg = [Float](repeating: 0, count: dim)
+                for e in embs {
+                    for j in 0..<dim { avg[j] += e[j] }
+                }
+                for j in 0..<dim { avg[j] /= Float(embs.count) }
+                incrementalEmbs[spk] = avg
+            }
+            await onIncrementalResult(outputSegments, incrementalEmbs)
         }
     
         switch boundarySource {
@@ -764,5 +843,49 @@ actor DiarizationService {
         for i in 0..<a.count { dot += a[i]*b[i]; magA += a[i]*a[i]; magB += b[i]*b[i] }
         let den = sqrt(magA)*sqrt(magB)
         return den > 0 ? dot/den : 0
+    }
+
+    /// 提取指定音频片段采样，若时长小于 targetDuration（默认 1.6 秒），向前后安全扩展上下文，首尾不足时镜像/重复填充。
+    /// 保障 sherpa-onnx eres2net 提取器获得足够且稳定维度的音频输入（≥ 25600 采样点 @ 16kHz）。
+    static func prepareSamplesWithContext(
+        allSamples: [Float],
+        startSec: Double,
+        endSec: Double,
+        sampleRate: Int = 16000,
+        targetDuration: Double = 1.6
+    ) -> [Float] {
+        let targetCount = Int(targetDuration * Double(sampleRate))
+        let startIdx = max(0, Int(startSec * Double(sampleRate)))
+        let endIdx = min(allSamples.count, Int(endSec * Double(sampleRate)))
+
+        guard startIdx < endIdx else { return [] }
+
+        let currentCount = endIdx - startIdx
+        if currentCount >= targetCount {
+            return Array(allSamples[startIdx..<endIdx])
+        }
+
+        let needed = targetCount - currentCount
+        let halfNeeded = needed / 2
+
+        var newStartIdx = max(0, startIdx - halfNeeded)
+        let remainingNeeded = targetCount - (endIdx - newStartIdx)
+        var newEndIdx = min(allSamples.count, endIdx + remainingNeeded)
+
+        if newEndIdx - newStartIdx < targetCount {
+            let leftCompensation = targetCount - (newEndIdx - newStartIdx)
+            newStartIdx = max(0, newStartIdx - leftCompensation)
+        }
+
+        var extendedSamples = Array(allSamples[newStartIdx..<newEndIdx])
+
+        while extendedSamples.count < targetCount {
+            let padCount = targetCount - extendedSamples.count
+            if extendedSamples.isEmpty { break }
+            let copyChunk = Array(extendedSamples.prefix(padCount))
+            extendedSamples.append(contentsOf: copyChunk)
+        }
+
+        return extendedSamples
     }
 }

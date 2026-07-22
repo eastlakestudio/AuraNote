@@ -97,6 +97,9 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.eastlakestudio.auranote.tests
         TEST_HOST: $(BUILT_PRODUCTS_DIR)/AuraNote.app/Contents/MacOS/AuraNote
         BUNDLE_LOADER: $(TEST_HOST)
+        SWIFT_INCLUDE_PATHS: "$(SRCROOT)/Libraries/sherpa-onnx"
+        LIBRARY_SEARCH_PATHS: "$(SRCROOT)/Libraries/sherpa-onnx/lib"
+        OTHER_LDFLAGS: "$(inherited) -lsherpa-onnx-c-api"
 
 schemes:
   AuraNote:
