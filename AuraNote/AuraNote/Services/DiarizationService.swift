@@ -15,6 +15,13 @@ struct DiarizationOutput {
     let embeddings: [String: [Float]]
 }
 
+/// VAD 边界打包区块（最多 10 段或累计最多 20 秒）
+struct VADChunk {
+    let chunkStart: Double
+    let chunkEnd: Double
+    let subBoundaries: [(start: Double, end: Double)]
+}
+
 // MARK: - Diarization Service (sherpa-onnx)
 
 actor DiarizationService {
@@ -574,7 +581,7 @@ actor DiarizationService {
         case stream(AsyncStream<(Double, Double)>)
     }
     
-    /// 核心处理循环：逐段提取声纹 + 增量聚类，支持数组和流式两种输入源
+    /// 核心处理循环：按 20s/10段 打包 Chunk + 提取 Chunk 声纹 + 时间重叠映射赋给 Whisper 句段
     private func processSegments(
         samples: [Float],
         boundarySource: BoundarySource,
@@ -587,26 +594,20 @@ actor DiarizationService {
         let clustering = IncrementalSpeakerClustering(mergeDistanceThreshold: distThreshold)
         var outputSegments: [DiarizedSegment] = []
         var speakerEmbeddingLists: [String: [[Float]]] = [:]
-        var processedCount = 0
+        var processedChunkCount = 0
         var skippedCount = 0
-    
-        var totalSegmentIndex = 0
-        /// 处理单个边界（统一滑窗提取，不设长短特例判断，精细匹配会议整理界面的每一行分行）
-        func processOne(_ segStart: Double, _ segEnd: Double) async {
-            totalSegmentIndex += 1
-            let segIndex = totalSegmentIndex
-            let startIdx = Int(segStart * 16000)
-            let endIdx = min(Int(segEnd * 16000), samples.count)
-            guard startIdx < endIdx else {
-                AppLog.info("[DiarService] Whisper/VAD Segment #\(segIndex) [\(String(format: "%.2f", segStart))s - \(String(format: "%.2f", segEnd))s] skipped (invalid sample bounds)")
-                skippedCount += 1
-                return
-            }
-            let segSamples = Self.prepareSamplesWithContext(allSamples: samples, startSec: segStart, endSec: segEnd)
-            let segDuration = segEnd - segStart
-            guard segDuration >= 0.3 else {
-                AppLog.info("[DiarService] Whisper/VAD Segment #\(segIndex) [\(String(format: "%.2f", segStart))s - \(String(format: "%.2f", segEnd))s] (dur: \(String(format: "%.2f", segDuration))s) skipped (duration < 0.3s)")
-                skippedCount += 1
+
+        /// 处理单个打包 Chunk（包含 chunkStart...chunkEnd 以及子句段 subBoundaries）
+        func processChunk(_ chunk: VADChunk) async {
+            processedChunkCount += 1
+            let chunkStart = chunk.chunkStart
+            let chunkEnd = chunk.chunkEnd
+            let chunkDuration = chunkEnd - chunkStart
+
+            let startIdx = Int(chunkStart * 16000)
+            let endIdx = min(Int(chunkEnd * 16000), samples.count)
+            guard startIdx < endIdx, chunkDuration >= 0.3 else {
+                skippedCount += chunk.subBoundaries.count
                 return
             }
 
@@ -615,23 +616,22 @@ actor DiarizationService {
 
             var subSegments: [(label: String, start: Double, end: Double)] = []
 
-            if segDuration <= windowSec {
-                // 时长小于窗口，使用上下文填充后的 1.6s 音频提取稳健声纹
+            if chunkDuration <= windowSec {
+                let winSamples = Self.prepareSamplesWithContext(allSamples: samples, startSec: chunkStart, endSec: chunkEnd)
                 do {
-                    let emb = try extractor.extractEmbedding(samples: segSamples, sampleRate: 16000)
+                    let emb = try extractor.extractEmbedding(samples: winSamples, sampleRate: 16000)
                     let label = await clustering.addEmbedding(emb)
                     speakerEmbeddingLists[label, default: []].append(emb)
-                    subSegments.append((label: label, start: segStart, end: segEnd))
+                    subSegments.append((label: label, start: chunkStart, end: chunkEnd))
                 } catch {
-                    AppLog.warn("[DiarService] embedding extraction failed for segment \(segIndex): \(error)")
-                    skippedCount += 1
+                    AppLog.warn("[DiarService] embedding extraction failed for chunk #\(processedChunkCount): \(error)")
+                    skippedCount += chunk.subBoundaries.count
                     return
                 }
             } else {
-                // 时长大于窗口，按 1.6s 窗口、0.8s 步长滑动提取
-                var currStart = segStart
-                while currStart < segEnd {
-                    let currEnd = min(currStart + windowSec, segEnd)
+                var currStart = chunkStart
+                while currStart < chunkEnd {
+                    let currEnd = min(currStart + windowSec, chunkEnd)
                     if (currEnd - currStart) >= 0.3 {
                         let winSamples = Self.prepareSamplesWithContext(allSamples: samples, startSec: currStart, endSec: currEnd)
                         if let emb = try? extractor.extractEmbedding(samples: winSamples, sampleRate: 16000) {
@@ -640,14 +640,13 @@ actor DiarizationService {
                             subSegments.append((label: label, start: currStart, end: currEnd))
                         }
                     }
-
-                    if currEnd >= segEnd { break }
+                    if currEnd >= chunkEnd { break }
                     currStart += stepSec
                 }
             }
 
             if subSegments.isEmpty {
-                skippedCount += 1
+                skippedCount += chunk.subBoundaries.count
                 return
             }
 
@@ -661,7 +660,7 @@ actor DiarizationService {
                 }
             }
 
-            // 孤立短标签平滑过滤（Smoothing Filter）：消除 < 0.8s 瞬时噪点引致的切分变异
+            // 孤立短标签平滑过滤（Smoothing Filter）
             var smoothedSub: [DiarizedSegment] = []
             var sIdx = 0
             while sIdx < mergedSub.count {
@@ -682,20 +681,27 @@ actor DiarizationService {
             }
             mergedSub = smoothedSub
 
-            if !mergedSub.isEmpty {
-                let first = mergedSub.first!
-                mergedSub[0] = DiarizedSegment(speakerId: first.speakerId, startTime: segStart, endTime: first.endTime)
-                let last = mergedSub.last!
-                mergedSub[mergedSub.count - 1] = DiarizedSegment(speakerId: last.speakerId, startTime: last.startTime, endTime: segEnd)
+            // 【核心关键点】：使用时间重叠最大化匹配，将 Chunk 声纹区间精准分配回每个 Whisper 原生 VAD 句段
+            var chunkOutput: [DiarizedSegment] = []
+            for subBoundary in chunk.subBoundaries {
+                let assignedSpeaker = Self.assignSpeakerByOverlap(
+                    segStart: subBoundary.start,
+                    segEnd: subBoundary.end,
+                    speakerIntervals: mergedSub
+                )
+                chunkOutput.append(DiarizedSegment(
+                    speakerId: assignedSpeaker,
+                    startTime: subBoundary.start,
+                    endTime: subBoundary.end
+                ))
             }
 
-            outputSegments.append(contentsOf: mergedSub)
+            outputSegments.append(contentsOf: chunkOutput)
 
-            let spkList = mergedSub.map { "\($0.speakerId)[\(String(format: "%.2f", $0.startTime))s-\(String(format: "%.2f", $0.endTime))s]" }.joined(separator: ", ")
-            AppLog.info("[DiarService] Whisper/VAD Segment #\(segIndex) [\(String(format: "%.2f", segStart))s - \(String(format: "%.2f", segEnd))s] (dur: \(String(format: "%.2f", segDuration))s) -> \(mergedSub.count) speaker intervals: \(spkList)")
-            processedCount += 1
+            let spkSummary = Set(chunkOutput.map(\.speakerId)).sorted().joined(separator: ", ")
+            AppLog.info("[DiarService] Chunk #\(processedChunkCount) [\(String(format: "%.2f", chunkStart))s - \(String(format: "%.2f", chunkEnd))s] (\(chunk.subBoundaries.count) Whisper segments) -> assigned to \(spkSummary)")
 
-            // 计算当前各 Speaker 的平均声纹并回调
+            // 计算当前各 Speaker 的平均声纹并流式回调
             var incrementalEmbs: [String: [Float]] = [:]
             for (spk, embs) in speakerEmbeddingLists where !embs.isEmpty {
                 let dim = embs[0].count
@@ -708,19 +714,49 @@ actor DiarizationService {
             }
             await onIncrementalResult(outputSegments, incrementalEmbs)
         }
-    
+
         switch boundarySource {
         case .array(let boundaries):
-            for boundary in boundaries {
-                await processOne(boundary.0, boundary.1)
+            let chunks = Self.groupBoundaries(boundaries, maxCount: 10, maxDuration: 20.0)
+            AppLog.info("[DiarService] Grouped \(boundaries.count) boundaries into \(chunks.count) chunks (max 10 segs / 20s)")
+            for chunk in chunks {
+                await processChunk(chunk)
             }
         case .stream(let stream):
+            var currentBuffer: [(start: Double, end: Double)] = []
             for await boundary in stream {
-                await processOne(boundary.0, boundary.1)
+                let namedBoundary = (start: boundary.0, end: boundary.1)
+                if currentBuffer.isEmpty {
+                    currentBuffer.append(namedBoundary)
+                    continue
+                }
+                let firstStart = currentBuffer.first!.start
+                let newEnd = namedBoundary.end
+                let proposedDuration = newEnd - firstStart
+
+                if currentBuffer.count >= 10 || proposedDuration >= 20.0 {
+                    let chunk = VADChunk(
+                        chunkStart: firstStart,
+                        chunkEnd: currentBuffer.last!.end,
+                        subBoundaries: currentBuffer
+                    )
+                    await processChunk(chunk)
+                    currentBuffer = [namedBoundary]
+                } else {
+                    currentBuffer.append(namedBoundary)
+                }
+            }
+            if !currentBuffer.isEmpty {
+                let chunk = VADChunk(
+                    chunkStart: currentBuffer.first!.start,
+                    chunkEnd: currentBuffer.last!.end,
+                    subBoundaries: currentBuffer
+                )
+                await processChunk(chunk)
             }
         }
 
-        // 聚类级合并：全部段处理完后，用充足数据量的簇质心互比，避免小簇误合并
+        // 聚类级合并：全部 Chunk 处理完后，用充足数据量的簇质心互比，二次修正微小差异
         let remap = await clustering.mergeSimilarClusters()
         if !remap.isEmpty {
             outputSegments = outputSegments.map { seg in
@@ -741,7 +777,7 @@ actor DiarizationService {
         let label = if case .stream = boundarySource { "stream" } else { "segments" }
         AppLog.info("[DiarService] diarize from \(label) complete: \(speakerCount) speakers, \(outputSegments.count) segments, \(skippedCount) skipped (elapsed: \(String(format: "%.1f", Date().timeIntervalSince(startTime)))s)")
         onClusteringComplete(speakerCount)
-    
+
         var rawEmbeddings: [String: [Float]] = [:]
         for (speaker, embs) in speakerEmbeddingLists where !embs.isEmpty {
             let dim = embs[0].count
@@ -752,7 +788,7 @@ actor DiarizationService {
             for j in 0..<dim { avg[j] /= Float(embs.count) }
             rawEmbeddings[speaker] = avg
         }
-    
+
         return DiarizationOutput(segments: outputSegments, embeddings: rawEmbeddings)
     }
 
@@ -887,5 +923,92 @@ actor DiarizationService {
         }
 
         return extendedSamples
+    }
+
+    /// 将有序的 VAD 边界列表按“最多 maxCount 段”且“最大累计时长 maxDuration 秒”打包成 Chunk 数组
+    static func groupBoundaries(
+        _ boundaries: [(start: Double, end: Double)],
+        maxCount: Int = 10,
+        maxDuration: Double = 20.0
+    ) -> [VADChunk] {
+        guard !boundaries.isEmpty else { return [] }
+
+        var chunks: [VADChunk] = []
+        var currentSub: [(start: Double, end: Double)] = []
+
+        for b in boundaries {
+            if currentSub.isEmpty {
+                currentSub.append(b)
+                continue
+            }
+
+            let firstStart = currentSub.first!.start
+            let newEnd = b.end
+            let proposedDuration = newEnd - firstStart
+
+            if currentSub.count >= maxCount || proposedDuration > maxDuration {
+                chunks.append(VADChunk(
+                    chunkStart: firstStart,
+                    chunkEnd: currentSub.last!.end,
+                    subBoundaries: currentSub
+                ))
+                currentSub = [b]
+            } else {
+                currentSub.append(b)
+            }
+        }
+
+        if !currentSub.isEmpty {
+            chunks.append(VADChunk(
+                chunkStart: currentSub.first!.start,
+                chunkEnd: currentSub.last!.end,
+                subBoundaries: currentSub
+            ))
+        }
+
+        return chunks
+    }
+
+    /// 时间重叠最大化分配算法：对于单个 Whisper VAD 段 (segStart, segEnd)，
+    /// 计算其与所有的 speakerIntervals [DiarizedSegment] 的重叠时长，选取重叠最大的 Speaker
+    static func assignSpeakerByOverlap(
+        segStart: Double,
+        segEnd: Double,
+        speakerIntervals: [DiarizedSegment],
+        fallbackSpeaker: String = "Speaker_1"
+    ) -> String {
+        var maxOverlap: Double = 0
+        var bestSpeaker: String?
+
+        for interval in speakerIntervals {
+            let intersectStart = max(segStart, interval.startTime)
+            let intersectEnd = min(segEnd, interval.endTime)
+            let overlap = max(0.0, intersectEnd - intersectStart)
+
+            if overlap > maxOverlap {
+                maxOverlap = overlap
+                bestSpeaker = interval.speakerId
+            }
+        }
+
+        if let speaker = bestSpeaker, maxOverlap > 0 {
+            return speaker
+        }
+
+        // 若无重叠（极端情况），找中心距离最近的区间
+        let segCenter = (segStart + segEnd) / 2.0
+        var minDistance = Double.infinity
+        var closestSpeaker = fallbackSpeaker
+
+        for interval in speakerIntervals {
+            let center = (interval.startTime + interval.endTime) / 2.0
+            let dist = abs(center - segCenter)
+            if dist < minDistance {
+                minDistance = dist
+                closestSpeaker = interval.speakerId
+            }
+        }
+
+        return closestSpeaker
     }
 }
