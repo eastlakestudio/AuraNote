@@ -35,7 +35,8 @@ enum AppLog {
 
     private static func log(level: LogLevel, message: String, file: String, function: String) {
         let fileName = (file as NSString).lastPathComponent
-        let formatted = "[\(fileName):\(function)] \(message)"
+        let time = dateFormatter.string(from: Date())
+        let formatted = "[\(time)] [\(fileName):\(function)] \(message)"
 
         // 1. OSLog 输出（Console.app 可按 subsystem/category 过滤）
         switch level {
@@ -48,7 +49,6 @@ enum AppLog {
         }
 
         // 2. 追加写入 debug.log（供 DebugLogView 展示）
-        let time = dateFormatter.string(from: Date())
         let levelStr: String = {
             switch level {
             case .info: return "INFO"
@@ -56,7 +56,7 @@ enum AppLog {
             case .error: return "ERROR"
             }
         }()
-        let line = "[\(time)] [\(levelStr)] \(formatted)\n"
+        let line = "[\(levelStr)] \(formatted)\n"
 
         queue.async {
             let logURL = SettingsManager.shared.dataDirectory

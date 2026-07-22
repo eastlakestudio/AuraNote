@@ -25,6 +25,9 @@ struct RecordingView: View {
                 Divider()
                 MeetingInfoSidebar(viewModel: viewModel, filterSpeaker: $dummyFilter, attendeesString: $dummyAttendees, showSpeakerSections: false)
                     .frame(width: 260)
+                    .onAppear {
+                        dummyAttendees = viewModel.currentMeeting?.attendees ?? ""
+                    }
             }
         }
         .toolbar {

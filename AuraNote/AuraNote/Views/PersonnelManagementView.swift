@@ -30,6 +30,22 @@ struct PersonnelManagementView: View {
     @State private var showDeleteMeetingClipsConfirm = false
     @State private var deleteMeetingClipsTarget: PersonGroupedClips?
     @State private var showClearAllConfirm = false
+    
+    // 声纹重置
+    @State private var showResetVoiceprintConfirm = false
+    @State private var resetVoiceprintTarget: Contact?
+    @State private var showResetAllVoiceprintsConfirm = false
+    @State private var embeddingContactIds: Set<String> = []
+
+    // 批量选择删除（右列 — 发言记录）
+    @State private var batchSelectMode = false
+    @State private var selectedClipIds: Set<String> = []
+    @State private var showBatchDeleteConfirm = false
+
+    // 批量选择删除（左列 — 发言人）
+    @State private var batchContactMode = false
+    @State private var selectedContactIds: Set<String> = []
+    @State private var showBatchDeleteContactsConfirm = false
 
     var body: some View {
         HStack(spacing: 0) {
@@ -44,7 +60,10 @@ struct PersonnelManagementView: View {
                 .frame(maxWidth: .infinity)
         }
         .background(Color(nsColor: .windowBackgroundColor))
-        .onAppear { contacts = db.fetchAllContacts() }
+        .onAppear {
+            contacts = db.fetchAllContacts()
+            embeddingContactIds = Set(db.fetchContactsWithEmbeddings().map { $0.id })
+        }
         .sheet(isPresented: $showAddSheet) {
             ContactEditView(onSave: { contact in
                 try? db.saveContact(contact)
@@ -117,6 +136,58 @@ struct PersonnelManagementView: View {
         } message: {
             Text(loc("clear_all_clips_msg"))
         }
+        .alert(loc("clear_voiceprint"), isPresented: $showResetVoiceprintConfirm) {
+            Button(loc("cancel"), role: .cancel) { resetVoiceprintTarget = nil }
+            Button(loc("clear_voiceprint"), role: .destructive) {
+                if let contact = resetVoiceprintTarget {
+                    try? db.clearContactEmbedding(contactId: contact.id)
+                    embeddingContactIds.remove(contact.id)
+                    resetVoiceprintTarget = nil
+                }
+            }
+        } message: {
+            if let contact = resetVoiceprintTarget {
+                Text(String(format: loc("clear_voiceprint_msg"), contact.name))
+            }
+        }
+        .alert(loc("clear_all_voiceprints"), isPresented: $showResetAllVoiceprintsConfirm) {
+            Button(loc("cancel"), role: .cancel) { }
+            Button(loc("clear_voiceprint"), role: .destructive) {
+                try? db.clearAllContactEmbeddings()
+                embeddingContactIds = []
+            }
+        } message: {
+            Text(loc("clear_all_voiceprints_msg"))
+        }
+        .alert(loc("batch_delete_clips"), isPresented: $showBatchDeleteConfirm) {
+            Button(loc("cancel"), role: .cancel) { }
+            Button(loc("delete"), role: .destructive) {
+                for clipId in selectedClipIds {
+                    try? db.deleteSpeechClip(id: clipId)
+                }
+                selectedClipIds = []
+                batchSelectMode = false
+                refreshClips()
+            }
+        } message: {
+            Text(String(format: loc("batch_delete_clips_msg"), selectedClipIds.count))
+        }
+        .alert(loc("batch_delete_contacts"), isPresented: $showBatchDeleteContactsConfirm) {
+            Button(loc("cancel"), role: .cancel) { }
+            Button(loc("delete"), role: .destructive) {
+                for contactId in selectedContactIds {
+                    try? db.deleteContact(id: contactId)
+                }
+                if let selected = selectedContact, selectedContactIds.contains(selected.id) {
+                    selectedContact = nil
+                }
+                selectedContactIds = []
+                batchContactMode = false
+                contacts = db.fetchAllContacts()
+            }
+        } message: {
+            Text(String(format: loc("batch_delete_contacts_msg"), selectedContactIds.count))
+        }
     }
 
     // MARK: - 左列
@@ -124,11 +195,51 @@ struct PersonnelManagementView: View {
     private var leftColumn: some View {
         VStack(spacing: 0) {
             HStack {
-                Text(loc("personnel_list")).font(.headline)
-                Spacer()
-                Button { showAddSheet = true } label: {
-                    Image(systemName: "person.badge.plus").foregroundStyle(.purple)
-                }.buttonStyle(.plain).help(loc("add_person"))
+                if batchContactMode {
+                    Button(loc("select_all")) {
+                        selectedContactIds = Set(contacts.map { $0.id })
+                    }
+                    .font(.caption)
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    if !selectedContactIds.isEmpty {
+                        Button(role: .destructive) {
+                            showBatchDeleteContactsConfirm = true
+                        } label: {
+                            Label(String(format: loc("batch_delete_count"), selectedContactIds.count),
+                                  systemImage: "trash")
+                                .font(.caption)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                    Spacer()
+                    Button(loc("done")) {
+                        batchContactMode = false
+                        selectedContactIds = []
+                    }
+                    .font(.caption)
+                    .buttonStyle(.borderedProminent)
+                    .tint(.purple)
+                    .controlSize(.small)
+                } else {
+                    Text(loc("personnel_list")).font(.headline)
+                    Spacer()
+                    Button { showAddSheet = true } label: {
+                        Image(systemName: "person.badge.plus").foregroundStyle(.purple)
+                    }.buttonStyle(.plain).help(loc("add_person"))
+                    if !contacts.isEmpty {
+                        Button {
+                            batchContactMode = true
+                            selectedContactIds = []
+                        } label: {
+                            Text(loc("batch_select")).font(.caption)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .padding(.leading, 4)
+                    }
+                }
             }.padding()
 
             Divider()
@@ -139,17 +250,32 @@ struct PersonnelManagementView: View {
                 }.frame(maxHeight: .infinity)
             } else {
                 List(contacts, id: \.id) { contact in
+                    let isSelected = selectedContactIds.contains(contact.id)
                     Button {
-                        selectedContact = contact
-                        editingAttrName = contact.name
-                        editingAttrRole = contact.role ?? ""
-                        editingAttrCompany = contact.company ?? ""
-                        isDirty = false
-                        let items = db.fetchSpeechClipsGroupedByMeeting(forContact: contact.id)
-                        groupedClips = items.map { PersonGroupedClips(meeting: $0.meeting, clips: $0.clips) }
-                        collapsedGroups = Set(groupedClips.map { $0.id })  // 默认全部折叠
+                        if batchContactMode {
+                            if isSelected {
+                                selectedContactIds.remove(contact.id)
+                            } else {
+                                selectedContactIds.insert(contact.id)
+                            }
+                        } else {
+                            selectedContact = contact
+                            editingAttrName = contact.name
+                            editingAttrRole = contact.role ?? ""
+                            editingAttrCompany = contact.company ?? ""
+                            isDirty = false
+                            let items = db.fetchSpeechClipsGroupedByMeeting(forContact: contact.id)
+                            groupedClips = items.map { PersonGroupedClips(meeting: $0.meeting, clips: $0.clips) }
+                            collapsedGroups = Set(groupedClips.map { $0.id })  // 默认全部折叠
+                        }
                     } label: {
                         HStack(spacing: 8) {
+                            if batchContactMode {
+                                let iconName = isSelected ? "checkmark.circle.fill" : "circle"
+                                let iconColor: Color = isSelected ? .purple : .secondary
+                                Image(systemName: iconName)
+                                    .foregroundStyle(iconColor)
+                            }
                             Circle()
                                 .fill(personColor(contact.name))
                                 .frame(width: 24, height: 24)
@@ -166,15 +292,17 @@ struct PersonnelManagementView: View {
                     }
                     .buttonStyle(.plain)
                     .contextMenu {
-                        Button { editContact = contact } label: {
-                            Label(loc("edit"), systemImage: "pencil")
-                        }
-                        Divider()
-                        Button(role: .destructive) {
-                            deleteTarget = contact
-                            showDeleteConfirm = true
-                        } label: {
-                            Label(loc("delete"), systemImage: "trash")
+                        if !batchContactMode {
+                            Button { editContact = contact } label: {
+                                Label(loc("edit"), systemImage: "pencil")
+                            }
+                            Divider()
+                            Button(role: .destructive) {
+                                deleteTarget = contact
+                                showDeleteConfirm = true
+                            } label: {
+                                Label(loc("delete"), systemImage: "trash")
+                            }
                         }
                     }
                 }
@@ -199,19 +327,7 @@ struct PersonnelManagementView: View {
                 ZStack {
                     if isDirty {
                         Button(loc("save")) {
-                            let updated = Contact(
-                                id: contact.id,
-                                name: editingAttrName.trimmingCharacters(in: .whitespaces),
-                                role: editingAttrRole.trimmingCharacters(in: .whitespaces).isEmpty ? nil : editingAttrRole.trimmingCharacters(in: .whitespaces),
-                                company: editingAttrCompany.trimmingCharacters(in: .whitespaces).isEmpty ? nil : editingAttrCompany.trimmingCharacters(in: .whitespaces),
-                                avatarUrl: contact.avatarUrl,
-                                createdAt: contact.createdAt,
-                                updatedAt: Date()
-                            )
-                            try? db.saveContact(updated)
-                            selectedContact = updated
-                            contacts = db.fetchAllContacts()
-                            isDirty = false
+                            saveAttrs(contact)
                         }
                         .font(.caption)
                         .buttonStyle(.borderedProminent)
@@ -229,6 +345,7 @@ struct PersonnelManagementView: View {
                         .textFieldStyle(.roundedBorder)
                         .font(.subheadline)
                         .onChange(of: editingAttrName) { _, _ in setDirtyIfChanged(contact) }
+                        .onKeyPress(.return) { saveAttrs(contact); return .handled }
                     }
                     HStack {
                         Text(loc("role")).font(.caption).foregroundStyle(.secondary).frame(width: 40, alignment: .leading)
@@ -236,6 +353,7 @@ struct PersonnelManagementView: View {
                             .textFieldStyle(.roundedBorder)
                             .font(.subheadline)
                             .onChange(of: editingAttrRole) { _, _ in setDirtyIfChanged(contact) }
+                            .onKeyPress(.return) { saveAttrs(contact); return .handled }
                     }
                     HStack {
                         Text(loc("org")).font(.caption).foregroundStyle(.secondary).frame(width: 40, alignment: .leading)
@@ -243,8 +361,32 @@ struct PersonnelManagementView: View {
                             .textFieldStyle(.roundedBorder)
                             .font(.subheadline)
                             .onChange(of: editingAttrCompany) { _, _ in setDirtyIfChanged(contact) }
+                            .onKeyPress(.return) { saveAttrs(contact); return .handled }
                 }
             }
+            
+            // 声纹状态（始终显示，避免面板抖动）
+            HStack {
+                if embeddingContactIds.contains(contact.id) {
+                    Image(systemName: "waveform.badge.checkmark").font(.caption).foregroundStyle(.green)
+                    Text(loc("voiceprint_registered")).font(.caption).foregroundStyle(.secondary)
+                } else {
+                    Image(systemName: "waveform.badge.exclamationmark").font(.caption).foregroundStyle(.tertiary)
+                    Text(loc("voiceprint_not_registered")).font(.caption).foregroundStyle(.tertiary)
+                }
+                Spacer()
+                if embeddingContactIds.contains(contact.id) {
+                    Button(role: .destructive) {
+                        resetVoiceprintTarget = contact
+                        showResetVoiceprintConfirm = true
+                    } label: {
+                        Text(loc("clear_voiceprint")).font(.caption)
+                    }
+                    .buttonStyle(.borderless)
+                    .controlSize(.small)
+                }
+            }
+            .frame(height: 20)
         }
         .padding()
         .background(.ultraThinMaterial)
@@ -263,8 +405,46 @@ struct PersonnelManagementView: View {
                         }
                     }
                     Spacer()
-                    Text(String(format: loc("speech_count_fmt"), groupedClips.reduce(0) { $0 + $1.clips.count }, groupedClips.count))
-                        .font(.caption).foregroundStyle(.secondary)
+                    if !groupedClips.isEmpty {
+                        if batchSelectMode {
+                            // 批量选择工具栏
+                            HStack(spacing: 8) {
+                                Button(loc("select_all")) {
+                                    selectedClipIds = Set(groupedClips.flatMap { $0.clips.map { $0.id } })
+                                }
+                                .font(.caption)
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                                if !selectedClipIds.isEmpty {
+                                    Button(role: .destructive) {
+                                        showBatchDeleteConfirm = true
+                                    } label: {
+                                        Label(String(format: loc("batch_delete_count"), selectedClipIds.count),
+                                              systemImage: "trash")
+                                            .font(.caption)
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.small)
+                                }
+                                Button(loc("done")) {
+                                    batchSelectMode = false
+                                    selectedClipIds = []
+                                }
+                                .font(.caption)
+                                .buttonStyle(.borderedProminent)
+                                .tint(.purple)
+                                .controlSize(.small)
+                            }
+                        } else {
+                            Button {
+                                batchSelectMode = true
+                            } label: {
+                                Text(loc("batch_select")).font(.caption)
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                        }
+                    }
                 }.padding()
             } else {
                 // 未选人时显示统计信息
@@ -301,6 +481,19 @@ struct PersonnelManagementView: View {
                     .padding()
                     .background(.quaternary.opacity(0.3))
                     .clipShape(RoundedRectangle(cornerRadius: 12))
+                    
+                    if !embeddingContactIds.isEmpty {
+                        HStack {
+                            Spacer()
+                            Button(role: .destructive) {
+                                showResetAllVoiceprintsConfirm = true
+                            } label: {
+                                Label(loc("clear_all_voiceprints"), systemImage: "waveform.badge.exclamationmark")
+                                    .font(.caption)
+                            }
+                            .buttonStyle(.borderless)
+                        }
+                    }
                 }.padding()
             }
 
@@ -327,7 +520,7 @@ struct PersonnelManagementView: View {
                 }
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 0) {
-                        ForEach(groupedClips) { group in
+                        ForEach(Array(groupedClips.enumerated()), id: \.element.id) { _, group in
                             VStack(alignment: .leading, spacing: 0) {
                                 // 会议标题头（可点击折叠）
                                 Button {
@@ -343,14 +536,17 @@ struct PersonnelManagementView: View {
                                         Image(systemName: collapsedGroups.contains(group.id) ? "chevron.right" : "chevron.down")
                                             .font(.caption).foregroundStyle(.secondary)
                                             .frame(width: 12)
+                                        let title = group.meeting.title
+                                        let clipCount = group.clips.count
+                                        let dateStr = formatDate(group.meeting.createdAt)
                                         Image(systemName: "calendar")
                                             .font(.caption).foregroundStyle(.purple)
-                                        Text(group.meeting.title)
+                                        Text(title)
                                             .font(.subheadline).fontWeight(.semibold)
                                         Spacer()
-                                        Text(String(format: loc("speech_count_fmt_short"), group.clips.count))
+                                        Text(String(format: loc("speech_count_fmt_short"), clipCount))
                                             .font(.caption2).foregroundStyle(.tertiary)
-                                        Text(formatDate(group.meeting.createdAt))
+                                        Text(dateStr)
                                             .font(.caption2).foregroundStyle(.tertiary)
                                     }
                                     .padding(.horizontal, 12).padding(.vertical, 8)
@@ -369,10 +565,29 @@ struct PersonnelManagementView: View {
 
                                 // 该会议的发言片段（折叠时隐藏）
                                 if !collapsedGroups.contains(group.id) {
-                                    ForEach(group.clips, id: \.id) { clip in
+                                    ForEach(Array(group.clips.enumerated()), id: \.element.id) { _, clip in
                                     VStack(alignment: .leading, spacing: 2) {
-                                        Text(clip.cleanedText ?? clip.originalText)
-                                            .font(.body)
+                                        HStack(alignment: .top, spacing: 6) {
+                                            // 批量选择复选框
+                                            if batchSelectMode {
+                                                let isSelected = selectedClipIds.contains(clip.id)
+                                                let iconName = isSelected ? "checkmark.circle.fill" : "circle"
+                                                let iconColor: Color = isSelected ? .purple : .secondary
+                                                Button {
+                                                    if isSelected {
+                                                        selectedClipIds.remove(clip.id)
+                                                    } else {
+                                                        selectedClipIds.insert(clip.id)
+                                                    }
+                                                } label: {
+                                                    Image(systemName: iconName)
+                                                        .foregroundStyle(iconColor)
+                                                }
+                                                .buttonStyle(.plain)
+                                            }
+                                            VStack(alignment: .leading, spacing: 2) {
+                                                Text(clip.cleanedText ?? clip.originalText)
+                                                    .font(.body)
                                         HStack {
                                             Button {
                                                 playClip(clip, meeting: group.meeting)
@@ -386,6 +601,7 @@ struct PersonnelManagementView: View {
                                             Text("· \(String(format: "%.1f", clip.endTime - clip.startTime))s")
                                                 .font(.caption2).foregroundStyle(.secondary)
                                             Spacer()
+                                            if !batchSelectMode {
                                             // 删除该条发言
                                             Button {
                                                 deleteClipTarget = clip
@@ -396,6 +612,7 @@ struct PersonnelManagementView: View {
                                             }
                                             .buttonStyle(.plain)
                                             .help(loc("delete_speech_clip"))
+                                            }
                                             // 重新分配说话人
                                             Menu {
                                                 ForEach(contacts) { contact in
@@ -418,6 +635,8 @@ struct PersonnelManagementView: View {
                                             .menuStyle(.borderlessButton)
                                             .frame(width: 20)
                                         }
+                                            } // inner VStack (text + controls)
+                                        } // outer HStack (checkbox + inner)
                                     }
                                     .padding(.horizontal, 20).padding(.vertical, 6)
                                     Divider().padding(.leading, 20)
@@ -451,6 +670,24 @@ struct PersonnelManagementView: View {
     private func personColor(_ name: String) -> Color {
         let c: [Color] = [.purple, .blue, .orange, .green, .pink, .teal, .indigo, .mint]
         return c[abs(name.hashValue) % c.count]
+    }
+
+    private func saveAttrs(_ contact: Contact) {
+        let name = editingAttrName.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty else { return }
+        let updated = Contact(
+            id: contact.id,
+            name: name,
+            role: editingAttrRole.trimmingCharacters(in: .whitespaces).isEmpty ? nil : editingAttrRole.trimmingCharacters(in: .whitespaces),
+            company: editingAttrCompany.trimmingCharacters(in: .whitespaces).isEmpty ? nil : editingAttrCompany.trimmingCharacters(in: .whitespaces),
+            avatarUrl: contact.avatarUrl,
+            createdAt: contact.createdAt,
+            updatedAt: Date()
+        )
+        try? db.saveContact(updated)
+        selectedContact = updated
+        contacts = db.fetchAllContacts()
+        isDirty = false
     }
 
     private func setDirtyIfChanged(_ contact: Contact) {

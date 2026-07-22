@@ -21,6 +21,10 @@ struct MeetingListView: View {
             VStack(spacing: 0) {
                 statusHeader
 
+                if !SettingsManager.shared.isModelAvailable && !SettingsManager.shared.currentModelDownloading {
+                    modelDownloadBanner
+                }
+
                 if let vm = listVM {
                     if vm.meetings.isEmpty {
                         emptyState
@@ -91,7 +95,7 @@ struct MeetingListView: View {
             .onAppear {
                 // 检测已下载的模型版本
                 let s = SettingsManager.shared
-                if s.modelVersion.isEmpty, !s.modelPath.isEmpty {
+                if s.modelVersion.isEmpty {
                     let repoPath = URL(fileURLWithPath: s.modelPath)
                         .appendingPathComponent("models/argmaxinc/whisperkit-coreml").path
                     let check = URL(fileURLWithPath: repoPath).appendingPathComponent(SettingsManager.supportedModelID)
@@ -118,6 +122,41 @@ struct MeetingListView: View {
 
     // MARK: - 子视图
 
+    /// 模型未下载时的引导横幅（非阻塞，引导用户前往设置下载）
+    private var modelDownloadBanner: some View {
+        NavigationLink(destination: SettingsView()) {
+            HStack(spacing: 14) {
+                Image(systemName: "arrow.down.circle.fill")
+                    .font(.system(size: 28))
+                    .foregroundStyle(.white)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(loc("model_not_downloaded_banner_title"))
+                        .font(.title3)
+                        .fontWeight(.bold)
+                        .foregroundStyle(.white)
+                    Text(loc("model_not_downloaded_banner_desc"))
+                        .font(.subheadline)
+                        .foregroundStyle(.white.opacity(0.85))
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.title3)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.white.opacity(0.7))
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 16)
+            .background(
+                LinearGradient(
+                    colors: [Color.orange, Color.orange.opacity(0.85)],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
     private var statusHeader: some View {
         let settings = SettingsManager.shared
         return HStack {
@@ -133,7 +172,7 @@ struct MeetingListView: View {
                 Text(loc("voice_model_not_ready")).font(.caption).foregroundStyle(.orange)
             } else {
                 Image(systemName: "checkmark.circle.fill").font(.caption).foregroundStyle(.green)
-                Text("openai/whisper-large-v3-turbo \(loc("model_ready_suffix"))").font(.caption).foregroundStyle(.secondary)
+                Text("openai/whisper-large-v3 \(loc("model_ready_suffix"))").font(.caption).foregroundStyle(.secondary)
             }
         }
         .padding()

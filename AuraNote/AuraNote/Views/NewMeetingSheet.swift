@@ -298,6 +298,7 @@ struct NewMeetingSheet: View {
                 Spacer()
 
                 Button {
+                    viewModel.formAttendees = attendees.joined(separator: " ")
                     if viewModel.recordingMode == .liveRecording {
                         Task {
                             await viewModel.startRecording()
@@ -305,7 +306,6 @@ struct NewMeetingSheet: View {
                     } else {
                         if let tempURL = tempSelectedAudioURL {
                             Task {
-                                viewModel.formAttendees = attendees.joined(separator: " ")
                                 await viewModel.importAudioFile(
                                     from: tempURL,
                                     title: viewModel.formTitle.isEmpty ? nil : viewModel.formTitle,

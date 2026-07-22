@@ -17,6 +17,21 @@ final class DatabaseManager {
         return f
     }()
 
+    /// 兜底解析 SQLite datetime('now') 旧格式（yyyy-MM-dd HH:mm:ss）
+    private static let fallbackDateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = TimeZone.current
+        return f
+    }()
+
+    /// 统一解析日期字符串：先尝试 ISO8601，再兜底 SQLite 旧格式
+    static func parseDate(_ str: String) -> Date? {
+        if let d = dateFormatter.date(from: str) { return d }
+        return fallbackDateFormatter.date(from: str)
+    }
+
     init() {
         let dataDir = SettingsManager.shared.dataDirectory
         let oldPath = dataDir.appendingPathComponent("mttone.db").path
@@ -184,8 +199,8 @@ final class DatabaseManager {
 
     func createMeeting(_ meeting: Meeting) throws {
         let sql = """
-        INSERT INTO meetings (id, parent_meeting_id, title, location, audio_path, duration, status, attendees)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO meetings (id, parent_meeting_id, title, location, audio_path, duration, status, attendees, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
@@ -201,6 +216,9 @@ final class DatabaseManager {
         sqlite3_bind_int(stmt, 6, Int32(meeting.duration))
         sqlite3_bind_text(stmt, 7, meeting.status.rawValue.cString, -1, SQLITE_TRANSIENT)
         bindOptionalText(stmt, index: 8, value: meeting.attendees)
+        let nowStr = Self.dateFormatter.string(from: meeting.createdAt)
+        sqlite3_bind_text(stmt, 9, nowStr.cString, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 10, nowStr.cString, -1, SQLITE_TRANSIENT)
 
         guard sqlite3_step(stmt) == SQLITE_DONE else {
             throw DBError.executeFailed(lastError)
@@ -293,8 +311,8 @@ final class DatabaseManager {
             let attendees = columnOptionalText(stmt, index: 10)
 
             let status = Meeting.Status(rawValue: statusStr) ?? .recording
-            let createdAt = Self.dateFormatter.date(from: createdAtStr) ?? Date()
-            let updatedAt = Self.dateFormatter.date(from: updatedAtStr) ?? Date()
+            let createdAt = Self.parseDate(createdAtStr) ?? Date()
+            let updatedAt = Self.parseDate(updatedAtStr) ?? Date()
 
             meetings.append(Meeting(
                 id: id,
@@ -316,7 +334,7 @@ final class DatabaseManager {
     func updateMeetingInfo(id: String, title: String, location: String?, createdAt: Date, attendees: String?, duration: Int? = nil) throws {
         let sql = """
         UPDATE meetings 
-        SET title = ?, location = ?, created_at = ?, attendees = ?, updated_at = datetime('now')
+        SET title = ?, location = ?, created_at = ?, attendees = ?, updated_at = ?
         """ + (duration != nil ? ", duration = ?" : "") + """
         WHERE id = ?
         """
@@ -327,13 +345,15 @@ final class DatabaseManager {
         defer { sqlite3_finalize(stmt) }
         
         let dateStr = Self.dateFormatter.string(from: createdAt)
+        let updatedAtStr = Self.dateFormatter.string(from: Date())
         
         sqlite3_bind_text(stmt, 1, title.cString, -1, SQLITE_TRANSIENT)
         bindOptionalText(stmt, index: 2, value: location)
         sqlite3_bind_text(stmt, 3, dateStr.cString, -1, SQLITE_TRANSIENT)
         bindOptionalText(stmt, index: 4, value: attendees)
+        sqlite3_bind_text(stmt, 5, updatedAtStr.cString, -1, SQLITE_TRANSIENT)
         
-        var nextIndex: Int32 = 5
+        var nextIndex: Int32 = 6
         if let d = duration {
             sqlite3_bind_int(stmt, nextIndex, Int32(d))
             nextIndex += 1
@@ -346,7 +366,7 @@ final class DatabaseManager {
     }
 
     func updateMeetingStatus(id: String, status: Meeting.Status, duration: Int? = nil) throws {
-        var sql = "UPDATE meetings SET status = ?, updated_at = datetime('now')"
+        var sql = "UPDATE meetings SET status = ?, updated_at = ?"
         if duration != nil {
             sql += ", duration = ?"
         }
@@ -358,12 +378,15 @@ final class DatabaseManager {
         }
         defer { sqlite3_finalize(stmt) }
 
+        let updatedAtStr = Self.dateFormatter.string(from: Date())
+
         sqlite3_bind_text(stmt, 1, status.rawValue.cString, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 2, updatedAtStr.cString, -1, SQLITE_TRANSIENT)
         if let dur = duration {
-            sqlite3_bind_int(stmt, 2, Int32(dur))
-            sqlite3_bind_text(stmt, 3, id.cString, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_int(stmt, 3, Int32(dur))
+            sqlite3_bind_text(stmt, 4, id.cString, -1, SQLITE_TRANSIENT)
         } else {
-            sqlite3_bind_text(stmt, 2, id.cString, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(stmt, 3, id.cString, -1, SQLITE_TRANSIENT)
         }
 
         guard sqlite3_step(stmt) == SQLITE_DONE else {

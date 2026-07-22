@@ -11,9 +11,6 @@ packages:
   WhisperKit:
     url: https://github.com/argmaxinc/WhisperKit.git
     from: 0.9.0
-  FluidAudio:
-    url: https://github.com/FluidInference/FluidAudio.git
-    branch: main
 
 settings:
   base:
@@ -30,7 +27,6 @@ targets:
       - AuraNote
     dependencies:
       - package: WhisperKit
-      - package: FluidAudio
     settings:
       base:
         INFOPLIST_FILE: AuraNote/Info.plist
@@ -38,6 +34,27 @@ targets:
         PRODUCT_NAME: AuraNote
         TARGETED_DEVICE_FAMILY: "1,2"
         SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: "YES"
+        SWIFT_INCLUDE_PATHS: "$(SRCROOT)/Libraries/sherpa-onnx"
+        LIBRARY_SEARCH_PATHS: "$(SRCROOT)/Libraries/sherpa-onnx/lib"
+        OTHER_LDFLAGS: "$(inherited) -lsherpa-onnx-c-api"
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks"
+    preBuildScripts:
+      - name: "Embed SherpaOnnx Libraries"
+        script: |
+          set -e
+          FRAMEWORKS_DIR="${BUILT_PRODUCTS_DIR}/${FRAMEWORKS_FOLDER_PATH}"
+          mkdir -p "$FRAMEWORKS_DIR"
+          for dylib in libsherpa-onnx-c-api.dylib libsherpa-onnx-cxx-api.dylib libonnxruntime.1.27.0.dylib libonnxruntime.dylib; do
+            cp -f "${SRCROOT}/Libraries/sherpa-onnx/lib/$dylib" "$FRAMEWORKS_DIR/"
+          done
+        basedOnDependencyAnalysis: false
+      - name: "Copy SherpaOnnx Models"
+        script: |
+          set -e
+          MODELS_DIR="${BUILT_PRODUCTS_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/sherpa-onnx-models"
+          mkdir -p "$MODELS_DIR"
+          cp -R "${SRCROOT}/Libraries/sherpa-onnx/models/"* "$MODELS_DIR/"
+        basedOnDependencyAnalysis: false
     info:
       path: AuraNote/Info.plist
       properties:
@@ -66,7 +83,6 @@ targets:
         com.apple.security.device.audio-input: true
         com.apple.security.network.client: true
         com.apple.security.files.user-selected.read-write: true
-        com.apple.security.files.downloads.read-write: true
 
   AuraNoteTests:
     type: bundle.unit-test

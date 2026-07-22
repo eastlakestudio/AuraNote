@@ -6,13 +6,11 @@ actor DiarSharedState {
     var diarSegments: [DiarizedSegment]? = nil
     var speakerMap: [String: (name: String, contactId: String)]? = nil
     var embeddings: [String: [Float]]? = nil
-    var rawEmbeddings: [String: [Float]]? = nil
     var matchedSpeakerIds: Set<String> = []
 
-    func setDiarization(_ segments: [DiarizedSegment], embeddings: [String: [Float]], rawEmbeddings: [String: [Float]] = [:]) {
+    func setDiarization(_ segments: [DiarizedSegment], embeddings: [String: [Float]]) {
         self.diarSegments = segments
         self.embeddings = embeddings
-        self.rawEmbeddings = rawEmbeddings
     }
 
     func setSpeakerMap(_ map: [String: (name: String, contactId: String)]) {
@@ -26,6 +24,5 @@ actor DiarSharedState {
     func getDiarSegments() -> [DiarizedSegment]? { diarSegments }
     func getSpeakerMap() -> [String: (name: String, contactId: String)]? { speakerMap }
     func getEmbeddings() -> [String: [Float]]? { embeddings }
-    func getRawEmbeddings() -> [String: [Float]]? { rawEmbeddings }
     func getMatchedSpeakerIds() -> Set<String> { matchedSpeakerIds }
 }

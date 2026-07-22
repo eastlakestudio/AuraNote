@@ -110,7 +110,8 @@ final class RecordingViewModel {
         var meeting = Meeting.create(
             title: title,
             location: formLocation.isEmpty ? nil : formLocation,
-            parentMeetingId: parentId
+            parentMeetingId: parentId,
+            attendees: formAttendees.isEmpty ? nil : formAttendees
         )
         meeting.createdAt = formCreatedAt
         meeting.updatedAt = formCreatedAt
@@ -254,7 +255,7 @@ final class RecordingViewModel {
             let currentSegments = self.transcriptSegments
             
             let result: DiarizationOutput? = await Task.detached {
-                try? await DiarizationService.shared.diarizeWithEmbeddings(audioURL: audioURL)
+                try? await DiarizationService.shared.diarizeSegmented(audioURL: audioURL, fastVAD: true)
             }.value
             
             guard let diarOutput = result else {
@@ -268,8 +269,7 @@ final class RecordingViewModel {
             
             await MainActor.run { [weak self] in
                 guard let self = self else { return }
-                // 优先使用原始波形声纹（与实时同模型），回退 FBANK
-                let matchEmbeddings = !diarOutput.rawSpeakerEmbeddings.isEmpty ? diarOutput.rawSpeakerEmbeddings : diarOutput.speakerEmbeddings
+                let matchEmbeddings = diarOutput.embeddings
                 self.lastDiarEmbeddings = matchEmbeddings
                 do {
                     try self.databaseManager.saveMeetingEmbeddings(meetingId: meetingId, embeddings: matchEmbeddings)
@@ -278,7 +278,7 @@ final class RecordingViewModel {
                 }
                 
                 let speakerCount = Set(diarOutput.segments.map(\.speakerId)).count
-                AppLog.info("Voiceprint diarization complete: \(speakerCount) speakers, \(diarOutput.segments.count) segments")
+                AppLog.info("Voiceprint diarization complete: \(speakerCount) speakers, \(diarOutput.segments.count) segments | config: incrClusterDist=\(SettingsManager.shared.incrementalClusteringDistance)")
                 
                 // 保留用户手动修改的标签
                 var customLabels: [String: (label: String, contactId: String?)] = [:]
@@ -312,8 +312,7 @@ final class RecordingViewModel {
                     matchedSpeakerIds = matchResult.matchedSpeakerIds
                     for (speakerId, match) in matchResult.highConfidence {
                         self.addAttendee(match.name)
-                        // 优先原始波形声纹（与实时匹配同模型），回退 FBANK 声纹
-                        let emb = diarOutput.rawSpeakerEmbeddings[speakerId] ?? diarOutput.speakerEmbeddings[speakerId] ?? []
+                        let emb = diarOutput.embeddings[speakerId] ?? []
                         do {
                             try self.databaseManager.saveContactEmbedding(
                                 contactId: match.contactId,
@@ -344,6 +343,14 @@ final class RecordingViewModel {
                 for label in remainingLabels {
                     self.addAttendee(label)
                 }
+                // 将新创建的联系人 contactId 写入对应 segment，确保发言记录自动关联
+                for label in remainingLabels {
+                    if let contact = self.databaseManager.fetchContact(byName: label) {
+                        for i in 0..<aligned.count where aligned[i].speakerLabel == label {
+                            aligned[i].contactId = contact.id
+                        }
+                    }
+                }
                 
                 self.transcriptSegments = aligned
                 self.segmentCount = aligned.count
@@ -351,7 +358,8 @@ final class RecordingViewModel {
                 self.offlineProgressFraction = 1.0
                 self.saveSegmentsToDatabase(meetingId: meetingId)
                 self.isTranscribingOffline = false
-                            safeUpdateStatus(id: meetingId, status: .completed)
+                let allLabeled = aligned.filter { $0.isFinal }.allSatisfy { !$0.speakerLabel.isEmpty }
+                safeUpdateStatus(id: meetingId, status: allLabeled ? .completed : .pendingDiarization)
             }
         }
     }
@@ -468,66 +476,86 @@ final class RecordingViewModel {
                         for seg in newReal {
                             coveredIntervals = mergeInterval(coveredIntervals, (seg.startTime, seg.endTime))
                         }
-                        // 合并真实段：已有真实段 + 新到达的
-                        let existingReal = self.transcriptSegments.filter { !$0.isPlaceholder }
+                        // 基于已覆盖时长并集 / 音频总时长 计算进度（单调递增，不会跳跃）
+                        if let m = self.currentMeeting, m.duration > 0 {
+                            let covered = coveredIntervals.reduce(0.0) { $0 + ($1.1 - $1.0) }
+                            self.offlineProgressFraction = min(0.99, max(0.01, covered / Double(m.duration)))
+                        }
+                    }
+                }
+
+                // 无论是否有新 Whisper 段，始终检查声纹分离结果并对齐标签
+                let existingReal = self.transcriptSegments.filter { !$0.isPlaceholder }
+                if let diar = await sharedState.getDiarSegments(), !diar.isEmpty {
+                    let diarSpeakerCount = Set(diar.map(\.speakerId)).count
+                    let hasUnlabeled = existingReal.contains { $0.speakerLabel.hasPrefix("Speaker_") }
+                    if hasUnlabeled || !batch.isEmpty {
+                        if !batch.isEmpty {
+                            AppLog.info("[Consumer] aligning \(existingReal.count) existing + \(batch.count) new segments with \(diar.count) diar segments (\(diarSpeakerCount) speakers)")
+                        } else if hasUnlabeled {
+                            AppLog.info("[Consumer] retro-aligning \(existingReal.count) unlabeled segments with \(diar.count) diar segments (\(diarSpeakerCount) speakers)")
+                        }
                         var allReal = existingReal
-                        for seg in newReal {
-                            if !allReal.contains(where: { $0.id == seg.id }) {
+                        // 合并新到达的段
+                        for seg in batch where !allReal.contains(where: { $0.id == seg.id }) {
+                            if !seg.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                                 allReal.append(seg)
                             }
                         }
                         allReal.sort { $0.startTime < $1.startTime }
 
-                        if let diar = await sharedState.getDiarSegments(), !diar.isEmpty {
-                            var customLabels: [String: (label: String, contactId: String?)] = [:]
-                            for seg in allReal {
-                                if !seg.speakerLabel.hasPrefix("Speaker_") {
-                                    customLabels[seg.id] = (seg.speakerLabel, seg.contactId)
+                        var customLabels: [String: (label: String, contactId: String?)] = [:]
+                        for seg in allReal {
+                            if !seg.speakerLabel.hasPrefix("Speaker_") {
+                                customLabels[seg.id] = (seg.speakerLabel, seg.contactId)
+                            }
+                        }
+                        // 因为 diar 段与 Whisper 转写段共用同一组时间边界，
+                        // 两者按 startTime 排序后序号 1:1 对应，直接按索引贴标签。
+                        // 流式阶段 diar 少于转写段时，先给前 N 个贴标签，其余保持待定。
+                        var aligned = allReal
+                        let matchCount = min(diar.count, aligned.count)
+                        for i in 0..<matchCount {
+                            aligned[i].speakerLabel = diar[i].speakerId
+                        }
+                        var finalAligned = aligned
+                        if !customLabels.isEmpty {
+                            finalAligned = aligned.map { seg in
+                                var s = seg
+                                if let saved = customLabels[seg.id] {
+                                    s.speakerLabel = saved.label
+                                    s.contactId = saved.contactId
+                                }
+                                return s
+                            }
+                        }
+                        if let autoMap = await sharedState.getSpeakerMap(), !autoMap.isEmpty {
+                            finalAligned = finalAligned.map { seg in
+                                var s = seg
+                                if let match = autoMap[seg.speakerLabel] {
+                                    s.speakerLabel = match.name
+                                    s.contactId = match.contactId
+                                }
+                                return s
+                            }
+                            for (speakerId, match) in autoMap {
+                                self.addAttendee(match.name)
+                                let embeddings = await sharedState.getEmbeddings()
+                                if let embedding = embeddings?[speakerId] {
+                                    do {
+                                        try self.databaseManager.saveContactEmbedding(
+                                            contactId: match.contactId, embedding: embedding
+                                        )
+                                    } catch {
+                                        AppLog.error("Failed to save contact voiceprint contactId=\(match.contactId): \(error.localizedDescription)")
+                                    }
                                 }
                             }
-                            let aligned = SpeakerAlignmentService.align(transcripts: allReal, diarization: diar)
-                            var finalAligned = aligned
-                            if !customLabels.isEmpty {
-                                finalAligned = aligned.map { seg in
-                                    var s = seg
-                                    if let saved = customLabels[seg.id] {
-                                        s.speakerLabel = saved.label
-                                        s.contactId = saved.contactId
-                                    }
-                                    return s
-                                }
-                            }
-                            if let autoMap = await sharedState.getSpeakerMap(), !autoMap.isEmpty {
-                                finalAligned = finalAligned.map { seg in
-                                    var s = seg
-                                    if let match = autoMap[seg.speakerLabel] {
-                                        s.speakerLabel = match.name
-                                        s.contactId = match.contactId
-                                    }
-                                    return s
-                                }
-                                for (speakerId, match) in autoMap {
-                                    self.addAttendee(match.name)
-                                    let rawDict = await sharedState.getRawEmbeddings()
-                                    let fbankDict = await sharedState.getEmbeddings()
-                                    if let embedding = rawDict?[speakerId] ?? fbankDict?[speakerId] {
-                                        do {
-                                            try self.databaseManager.saveContactEmbedding(
-                                                contactId: match.contactId, embedding: embedding
-                                            )
-                                        } catch {
-                                            AppLog.error("Failed to save contact voiceprint contactId=\(match.contactId): \(error.localizedDescription)")
-                                        }
-                                    }
-                                }
-                            }
-                            allReal = finalAligned
                         }
 
                         // 重建显示列表
                         if self.offlineTotalSegments > 0 {
-                            // 实时录音场景：真实段 + 剩余占位段
-                            let needed = max(0, self.offlineTotalSegments - allReal.count)
+                            let needed = max(0, self.offlineTotalSegments - finalAligned.count)
                             let fillPlaceholders: [TranscriptSegment] = (0..<needed).map { i in
                                 TranscriptSegment(
                                     id: "placeholder_fill_\(meetingId)_\(i)",
@@ -536,18 +564,36 @@ final class RecordingViewModel {
                                     isFinal: true, isPlaceholder: true
                                 )
                             }
-                            self.transcriptSegments = allReal + fillPlaceholders
+                            self.transcriptSegments = finalAligned + fillPlaceholders
                         } else {
-                            // 导入音频场景：仅追加真实段，无占位
-                            self.transcriptSegments = allReal
+                            self.transcriptSegments = finalAligned
                         }
-                        self.segmentCount = allReal.count
-                        // 基于已覆盖时长并集 / 音频总时长 计算进度（单调递增，不会跳跃）
-                        if let m = self.currentMeeting, m.duration > 0 {
-                            let covered = coveredIntervals.reduce(0.0) { $0 + ($1.1 - $1.0) }
-                            self.offlineProgressFraction = min(0.99, max(0.01, covered / Double(m.duration)))
+                        self.segmentCount = finalAligned.count
+                    }
+                } else if !batch.isEmpty {
+                    // 声纹分离尚未就绪：仅更新显示（无标签）
+                    var allReal = existingReal
+                    for seg in batch where !allReal.contains(where: { $0.id == seg.id }) {
+                        if !seg.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            allReal.append(seg)
                         }
                     }
+                    allReal.sort { $0.startTime < $1.startTime }
+                    if self.offlineTotalSegments > 0 {
+                        let needed = max(0, self.offlineTotalSegments - allReal.count)
+                        let fillPlaceholders: [TranscriptSegment] = (0..<needed).map { i in
+                            TranscriptSegment(
+                                id: "placeholder_fill_\(meetingId)_\(i)",
+                                startTime: 0, endTime: 0,
+                                text: "", speakerLabel: "Speaker_1",
+                                isFinal: true, isPlaceholder: true
+                            )
+                        }
+                        self.transcriptSegments = allReal + fillPlaceholders
+                    } else {
+                        self.transcriptSegments = allReal
+                    }
+                    self.segmentCount = allReal.count
                 }
                 // 每 10 次循环（~3秒）保存中间结果到数据库
                 saveCounter += 1
@@ -573,56 +619,90 @@ final class RecordingViewModel {
                 try Task.checkCancellation()
 
                 let speechLang = UserDefaults.standard.string(forKey: "speech_language") ?? "zh"
-                async let whisperTask = WhisperService.shared.transcribe(
+
+                // 预加载音频采样（供声纹提取复用，避免重复解码）
+                let samples = try await DiarizationService.shared.loadAudioSamples(audioURL)
+                AppLog.info("[Diar] audio preloaded: \(samples.count) samples")
+
+                // 创建消息池：Whisper 产出边界 → diar 消费
+                let (boundaryStream, boundaryContinuation) = AsyncStream<(Double, Double)>.makeStream()
+                var yieldedCount = 0
+
+                // 并行启动声纹提取（从 stream 消费边界，边到达边处理）
+                async let diarTask = DiarizationService.shared.diarizeFromStream(
+                    samples: samples,
+                    boundaryStream: boundaryStream,
+                    onIncrementalResult: { segments, embeddings in
+                        let spkCount = Set(segments.map(\.speakerId)).count
+                        if segments.count % 5 == 0 {
+                            AppLog.info("[Diar] stream update: \(segments.count) segments, \(spkCount) speakers")
+                        }
+                        await sharedState.setDiarization(segments, embeddings: embeddings)
+                    },
+                    onClusteringComplete: { count in
+                        AppLog.info("[Diar] clustering complete: \(count) speakers")
+                    }
+                )
+
+                // Whisper 转写（主线程等待，同时产出边界到 stream 供 diar 并行处理）
+                let offlineSegments = try await WhisperService.shared.transcribe(
                     audioURL: audioURL, meetingId: meetingId, language: speechLang,
                     onSegments: { partialSegments in
+                        // 将新边界推送到声纹处理流（增量，不重复）
+                        if partialSegments.count > yieldedCount {
+                            for i in yieldedCount..<partialSegments.count {
+                                let seg = partialSegments[i]
+                                boundaryContinuation.yield((seg.startTime, seg.endTime))
+                            }
+                            yieldedCount = partialSegments.count
+                        }
+                        // 同时推送到 UI 消费者循环
                         segmentQueue.async { pendingChunks.append(partialSegments) }
                     }
                 )
-                // 声纹分离先跑（秒级完成），结果共享给消费者即时对齐
-                _ = Task {
-                    if let diarOutput = try? await DiarizationService.shared.diarizeWithEmbeddings(audioURL: audioURL) {
-                        let speakerCount = Set(diarOutput.segments.map(\.speakerId)).count
-                        AppLog.info("Voiceprint diarization complete: \(speakerCount) speakers, \(diarOutput.segments.count) segments")
-                        // 优先使用原始波形声纹（与实时同模型），回退 FBANK
-                        let matchEmbeddings = !diarOutput.rawSpeakerEmbeddings.isEmpty ? diarOutput.rawSpeakerEmbeddings : diarOutput.speakerEmbeddings
-                        await sharedState.setDiarization(diarOutput.segments, embeddings: matchEmbeddings, rawEmbeddings: diarOutput.rawSpeakerEmbeddings)
-                        self.lastDiarEmbeddings = matchEmbeddings
-                        // 立即保存声纹向量到数据库（防止重启丢失）
-                        do {
-                            try await self.databaseManager.saveMeetingEmbeddings(meetingId: meetingId, embeddings: matchEmbeddings)
-                        } catch {
-                            AppLog.error("Failed to save meeting voiceprint vectors meeting=\(meetingId): \(error.localizedDescription)")
-                        }
-
-                        // 声纹匹配：与已知联系人比对
-                        let allContacts = await self.databaseManager.fetchAllContacts()
-                        let knownContacts = await self.databaseManager.fetchContactsWithEmbeddings()
-                        AppLog.info("Voiceprint matching: known contacts=\(allContacts.count)")
-                        var matchedSpeakerIds = Set<String>()
-                        if !knownContacts.isEmpty {
-                            let matchResult = SpeakerMatcher.match(embeddings: matchEmbeddings, against: knownContacts)
-                            matchedSpeakerIds = matchResult.matchedSpeakerIds
-                            var autoMap: [String: (name: String, contactId: String)] = [:]
-                            for (speakerId, match) in matchResult.highConfidence {
-                                autoMap[speakerId] = (name: match.name, contactId: match.contactId)
-                                do {
-                                    // 优先使用原始波形声纹（与实时 extractEmbedding 同模型），回退到 FBANK 声纹
-                                    let emb = diarOutput.rawSpeakerEmbeddings[speakerId] ?? diarOutput.speakerEmbeddings[speakerId] ?? []
-                                    try await self.databaseManager.saveContactEmbedding(contactId: match.contactId, embedding: emb)
-                                } catch {
-                                    AppLog.error("Failed to save contact voiceprint vectors contact=\(match.contactId): \(error.localizedDescription)")
-                                }
-                            }
-                            if !autoMap.isEmpty { await sharedState.setSpeakerMap(autoMap) }
-                        }
-                        // 未匹配的临时 Speaker 后续转正
-                        await sharedState.setMatchedSpeakerIds(matchedSpeakerIds)
-                    }
-                }
-
-                let offlineSegments = try await whisperTask
                 try Task.checkCancellation()
+
+                // Whisper 完成，关闭边界流，通知 diar 不再有新段
+                boundaryContinuation.finish()
+                AppLog.info("[Diar] Whisper complete: \(offlineSegments.count) segments, awaiting diar...")
+
+                // 等待声纹提取收尾
+                let diarOutput = await diarTask
+
+                let speakerCount = Set(diarOutput.segments.map(\.speakerId)).count
+                AppLog.info("[Diar] Voiceprint diarization result: \(speakerCount) speakers, \(diarOutput.segments.count) segments | config: incrClusterDist=\(SettingsManager.shared.incrementalClusteringDistance)")
+                // sharedState 已在 diarTask 中提前设置，此处只需处理后续匹配逻辑
+                let matchEmbeddings = diarOutput.embeddings
+                self.lastDiarEmbeddings = matchEmbeddings
+                    // 立即保存声纹向量到数据库（防止重启丢失）
+                    do {
+                        try await self.databaseManager.saveMeetingEmbeddings(meetingId: meetingId, embeddings: matchEmbeddings)
+                    } catch {
+                        AppLog.error("[Diar] Failed to save meeting voiceprint vectors meeting=\(meetingId): \(error.localizedDescription)")
+                    }
+
+                    // 声纹匹配：与已知联系人比对
+                    let allContacts = await self.databaseManager.fetchAllContacts()
+                    let knownContacts = await self.databaseManager.fetchContactsWithEmbeddings()
+                    AppLog.info("[Diar] Voiceprint matching: known contacts=\(allContacts.count)")
+                    var matchedSpeakerIds = Set<String>()
+                    if !knownContacts.isEmpty {
+                        let matchResult = SpeakerMatcher.match(embeddings: matchEmbeddings, against: knownContacts)
+                        matchedSpeakerIds = matchResult.matchedSpeakerIds
+                        var autoMap: [String: (name: String, contactId: String)] = [:]
+                        for (speakerId, match) in matchResult.highConfidence {
+                            autoMap[speakerId] = (name: match.name, contactId: match.contactId)
+                            do {
+                                let emb = diarOutput.embeddings[speakerId] ?? []
+                                try await self.databaseManager.saveContactEmbedding(contactId: match.contactId, embedding: emb)
+                            } catch {
+                                AppLog.error("[Diar] Failed to save contact voiceprint vectors contact=\(match.contactId): \(error.localizedDescription)")
+                            }
+                        }
+                        if !autoMap.isEmpty { await sharedState.setSpeakerMap(autoMap) }
+                    }
+                    // 未匹配的临时 Speaker 后续转正
+                    await sharedState.setMatchedSpeakerIds(matchedSpeakerIds)
 
                 // 等待消费者处理完回调发出的最后一批段
                 try? await Task.sleep(nanoseconds: 500_000_000)
@@ -695,27 +775,33 @@ final class RecordingViewModel {
                     }
                 }
 
+                // 获取已匹配的 speaker ID 列表，用于识别需要转正的新发言人
+                let matchedIds = await sharedState.getMatchedSpeakerIds()
+                let remainingLabels = Set(finalSegments.map(\.speakerLabel)).filter { $0.hasPrefix("Speaker_") && !matchedIds.contains($0) }
+
                 await MainActor.run { [weak self] in
                     guard let self = self else { return }
+                    // 未匹配的临时 Speaker 转正并绑定 contactId
+                    for label in remainingLabels {
+                        self.addAttendee(label)
+                        if let contact = self.databaseManager.fetchContact(byName: label) {
+                            for i in 0..<finalSegments.count where finalSegments[i].speakerLabel == label {
+                                finalSegments[i].contactId = contact.id
+                            }
+                        }
+                    }
                     self.transcriptSegments = finalSegments
                     self.segmentCount = finalSegments.count
                     self.offlineTotalSegments = finalSegments.count
                     self.offlineProgressFraction = 1.0
                     self.saveSegmentsToDatabase(meetingId: meetingId)
-                                safeUpdateStatus(id: meetingId, status: .completed)
+                    let allLabeled = finalSegments.filter { $0.isFinal }.allSatisfy { !$0.speakerLabel.isEmpty }
+                    safeUpdateStatus(id: meetingId, status: allLabeled ? .completed : .pendingDiarization)
                     AppLog.info("Offline transcription + diarization complete: \(finalSegments.count) segments")
-                    // 未匹配的临时 Speaker 转正
+                    // 兜底：为所有已映射到联系人的 segment 保存声纹向量（优先原始波形声纹）
                     Task {
-                        let matchedIds = await sharedState.getMatchedSpeakerIds()
-                        let remainingLabels = Set(finalSegments.map(\.speakerLabel)).filter { $0.hasPrefix("Speaker_") && !matchedIds.contains($0) }
-                        for label in remainingLabels {
-                            self.addAttendee(label)
-                        }
-                        // 兜底：为所有已映射到联系人的 segment 保存声纹向量（优先原始波形声纹）
-                        let rawEmb = await sharedState.getRawEmbeddings()
-                        let fbankEmb = await sharedState.getEmbeddings()
-                        let saveEmbeddings = rawEmb ?? fbankEmb
-                        if let embeddings = saveEmbeddings, !embeddings.isEmpty {
+                        let embeddings = await sharedState.getEmbeddings()
+                        if let embeddings = embeddings, !embeddings.isEmpty {
                             for seg in finalSegments {
                                 if let cid = seg.contactId, let emb = embeddings[seg.speakerLabel] ?? embeddings.first(where: { $0.key.contains(seg.speakerLabel) })?.value {
                                     do {
@@ -740,7 +826,8 @@ final class RecordingViewModel {
                     AppLog.warn("Offline transcription timed out but has \(existingCount) existing segments, using partial results")
                     await MainActor.run {
                         self.saveSegmentsToDatabase(meetingId: meetingId)
-                        self.safeUpdateStatus(id: meetingId, status: .completed)
+                        let allLabeled = self.transcriptSegments.filter { $0.isFinal }.allSatisfy { !$0.speakerLabel.isEmpty }
+                        self.safeUpdateStatus(id: meetingId, status: allLabeled ? .completed : .pendingDiarization)
                     }
                 } else {
                     AppLog.error("Offline transcription failed: \(error.localizedDescription)")
@@ -800,7 +887,8 @@ final class RecordingViewModel {
             status: .pendingDiarization,
             summary: nil,
             createdAt: formCreatedAt,
-            updatedAt: formCreatedAt
+            updatedAt: formCreatedAt,
+            attendees: formAttendees.isEmpty ? nil : formAttendees
         )
 
         do {
@@ -927,6 +1015,13 @@ final class RecordingViewModel {
                 contactId: clip.contactId,
                 isFinal: true
             )
+        }
+        // 修正历史数据：若状态为 completed 但实际段未全部标注，回退为 pendingDiarization
+        if let meeting = currentMeeting, meeting.status == .completed {
+            let allLabeled = transcriptSegments.allSatisfy { !$0.speakerLabel.isEmpty }
+            if !allLabeled {
+                safeUpdateStatus(id: meetingId, status: .pendingDiarization)
+            }
         }
     }
     

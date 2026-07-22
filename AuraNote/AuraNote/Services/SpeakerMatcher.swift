@@ -39,9 +39,8 @@ enum SpeakerMatcher {
             }
 
         let matchedIds = Set(highConfidence.keys)
-
-        let matchedNames = highConfidence.values.map(\.name).joined(separator: ", ")
-        AppLog.info("Voiceprint matching result: \(highConfidence.count) high-confidence matches \(matchedNames)")
+        let uniqueContacts = Set(highConfidence.values.map(\.name))
+        AppLog.info("Voiceprint matching result: \(highConfidence.count) high-confidence matches → \(uniqueContacts.count) unique contacts (\(uniqueContacts.sorted().joined(separator: ", ")))")
 
         return SpeakerMatchResult(
             highConfidence: highConfidence,

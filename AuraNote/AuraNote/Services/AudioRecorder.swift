@@ -33,6 +33,7 @@ final class AudioRecorder {
     private var currentChunkStartTime: Date?        // 当前片段的首个语音时间
     private var chunkCounter: Int = 0               // 片段序号
     private var pauseTimer: Timer?                  // 静默计时器，触发后切割片段
+    private var incrementalClustering = IncrementalSpeakerClustering()  // 增量声纹聚类（同会议未知说话人自动关联）
 
     init() {}
 
@@ -73,6 +74,10 @@ final class AudioRecorder {
         currentMeetingId = meetingId
         pauseTimer?.invalidate()
         pauseTimer = nil
+        Task { await incrementalClustering.reset() }
+        
+        let s = SettingsManager.shared
+        AppLog.info("[AudioRecorder Params] silenceThreshold=\(s.silenceThreshold) pauseWindow=\(s.pauseWindow)s liveTranscribeInterval=\(s.liveTranscribeInterval)s maxChunkDuration=\(s.maxChunkDuration)s noiseGate=\(s.noiseGate) targetPeak=\(s.targetPeak) maxGain=\(s.maxGain) baseGain=\(s.baseGain) liveMatchingThreshold=\(s.liveMatchingThreshold) matchingThreshold=\(s.matchingThreshold) highConfThreshold=\(s.highConfidenceThreshold)")
 
         // 配置 Audio Session (仅 iOS)
         #if os(iOS)
@@ -85,13 +90,13 @@ final class AudioRecorder {
         let recordingFormat = inputNode.outputFormat(forBus: 0)
 
         let wavSavePath = savePath.deletingPathExtension().appendingPathExtension("wav")
+        let saveFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16000, channels: 1, interleaved: false)!
         audioFile = try AVAudioFile(
             forWriting: wavSavePath,
-            settings: recordingFormat.settings
+            settings: saveFormat.settings
         )
         
-        let whisperFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: Double(WhisperKit.sampleRate), channels: 1, interleaved: false)!
-        self.audioConverter = AVAudioConverter(from: recordingFormat, to: whisperFormat)
+        self.audioConverter = AVAudioConverter(from: recordingFormat, to: saveFormat)
 
         inputNode.installTap(onBus: 0, bufferSize: 4096, format: recordingFormat) { [weak self] buffer, _ in
             guard let self = self else { return }
@@ -101,28 +106,31 @@ final class AudioRecorder {
             
             // 针对语音做自适应增强：有说话时强力增益，静音时不放大噪声
             let gainedBuffer = self.applySpeechEnhancement(to: buffer)
+            
+            // 统一转换为 16000 Hz
+            let resampledBuffer: AVAudioPCMBuffer
+            if let converter = self.audioConverter {
+                do {
+                    resampledBuffer = try AudioProcessor.resampleBuffer(gainedBuffer, with: converter)
+                } catch {
+                    return
+                }
+            } else {
+                resampledBuffer = gainedBuffer
+            }
+            
+            // 写入 16000 Hz WAV 文件
             do {
-                try self.audioFile?.write(from: gainedBuffer)
+                try self.audioFile?.write(from: resampledBuffer)
             } catch {
                 DispatchQueue.main.async {
                     self.errorMessage = String(format: "音频写入失败: %@", error.localizedDescription)
                 }
             }
-            // 可视化用增益后的振幅（EMA 平滑）
+            // 可视化用原始振幅（EMA 平滑）
             self.currentAmplitude = self.currentAmplitude * 0.7 + rawAmplitude * 0.3
             
-            var floatArray: [Float] = []
-            if gainedBuffer.format.sampleRate == Double(WhisperKit.sampleRate) && gainedBuffer.format.channelCount == 1 {
-                floatArray = AudioProcessor.convertBufferToArray(buffer: gainedBuffer)
-            } else {
-                guard let converter = self.audioConverter else { return }
-                do {
-                    let resampled = try AudioProcessor.resampleBuffer(gainedBuffer, with: converter)
-                    floatArray = AudioProcessor.convertBufferToArray(buffer: resampled)
-                } catch {
-                    // resample error
-                }
-            }
+            let floatArray = AudioProcessor.convertBufferToArray(buffer: resampledBuffer)
             
             // VAD 用未平滑的原始振幅，即时响应停顿，避免长句不切分
             self.appendAudioAndSegment(floatArray, rawAmplitude: rawAmplitude)
@@ -360,11 +368,23 @@ final class AudioRecorder {
             return
         }
 
+        // 始终保存 embedding 到 chunk（供离线分析回退复用）
+        await MainActor.run {
+            guard let idx = self.audioChunks.firstIndex(where: { $0.id == chunk.id }) else { return }
+            self.audioChunks[idx].embedding = embedding
+        }
+
         guard let match = DiarizationService.matchSingleEmbedding(
             embedding, against: contacts,
             threshold: SettingsManager.shared.liveMatchingThreshold
         ) else {
-            AppLog.info("Voiceprint matching: below threshold (threshold=\(SettingsManager.shared.liveMatchingThreshold))")
+            // 未匹配已知联系人 → 增量聚类自动关联同会议未知说话人
+            let label = await incrementalClustering.addEmbedding(embedding)
+            AppLog.info("Voiceprint clustering: assigned \(label) (threshold=\(SettingsManager.shared.liveMatchingThreshold))")
+            await MainActor.run {
+                guard let idx = self.audioChunks.firstIndex(where: { $0.id == chunk.id }) else { return }
+                self.audioChunks[idx].speakerLabel = label
+            }
             return
         }
 

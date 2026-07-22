@@ -30,33 +30,30 @@ struct ReviewingView: View {
     @State private var searchIndex = 0
     @FocusState private var isSearchFocused: Bool
 
-    private var diarizationProgress: (separated: Int, total: Int)? {
-        guard let meeting = viewModel.currentMeeting, meeting.duration > 0 else { return nil }
-        let finals = viewModel.transcriptSegments.filter { $0.isFinal }
-        let separated = finals.filter { !$0.speakerLabel.isEmpty }.count
-        let estimatedTotal = max(1, Int(Double(meeting.duration) / 3.0))
-        let total = max(estimatedTotal, finals.count)
-        return (separated, total)
-    }
-    
     private var retryButtonLabel: String {
         if viewModel.isTranscribingOffline { return loc("analyzing") }
         if viewModel.transcriptSegments.isEmpty { return loc("reanalyze") }
+        if diarizationProgressDone { return loc("reanalyze") }
         return loc("continue_analysis")
     }
     
     private var retryButtonIcon: String {
         viewModel.isTranscribingOffline ? "hourglass" : "waveform.badge.magnifyingglass"
     }
-    
-    private var diarizationProgressText: String? {
-        guard let dp = diarizationProgress else { return nil }
-        return "\(dp.separated) / \(dp.total) 段"
+
+    private var analysisStatsText: String? {
+        guard !viewModel.transcriptSegments.isEmpty else { return nil }
+        let finals = viewModel.transcriptSegments.filter { $0.isFinal }
+        let sentences = finals.count
+        let speakers = Set(finals.map { $0.speakerLabel }).count
+        return "\(sentences)\(loc("sentences_unit")) · \(speakers)\(loc("people_unit"))"
     }
     
     private var diarizationProgressDone: Bool {
-        guard let dp = diarizationProgress else { return false }
-        return dp.separated >= dp.total
+        guard !viewModel.transcriptSegments.isEmpty else { return false }
+        if viewModel.isTranscribingOffline { return false }
+        let finals = viewModel.transcriptSegments.filter { $0.isFinal }
+        return finals.allSatisfy { !$0.speakerLabel.isEmpty }
     }
     
     private var transcriptionPercent: Int? {
@@ -88,27 +85,19 @@ struct ReviewingView: View {
                 if let meeting = viewModel.currentMeeting, meeting.audioFileExists {
                     HStack(spacing: 6) {
                         Button {
-                            let hasSegments = !viewModel.transcriptSegments.isEmpty
-                            // 检测转写是否明显不完整（段数不足估算的 80%）
-                            let isIncomplete: Bool = {
-                                guard let m = viewModel.currentMeeting, m.duration > 0 else { return false }
-                                let finals = viewModel.transcriptSegments.filter { $0.isFinal }
-                                let estimated = max(1, Int(Double(m.duration) / 3.0))
-                                return finals.count < estimated * 8 / 10
-                            }()
                             let url = meeting.localAudioURL
-                            if hasSegments && !isIncomplete {
-                                // 段数完整 → 仅做声纹分离
-                                viewModel.continueOfflineDiarization(for: meeting.id, audioURL: url)
-                            } else if hasSegments && isIncomplete {
-                                // 段数不完整 → 确认后重新完整转写
+                            if viewModel.transcriptSegments.isEmpty {
+                                // 无段 → 直接完整转写
+                                viewModel.retryOfflineTranscription(for: meeting.id, audioURL: url)
+                            } else if diarizationProgressDone {
+                                // 声纹分离已完成 → 弹确认框后重新完整转写
                                 pendingRetryAction = { [weak viewModel] in
                                     viewModel?.retryOfflineTranscription(for: meeting.id, audioURL: url)
                                 }
                                 showRetryConfirm = true
                             } else {
-                                // 无段 → 直接完整转写
-                                viewModel.retryOfflineTranscription(for: meeting.id, audioURL: url)
+                                // 声纹分离未完成 → 仅继续声纹分离（不重新转写）
+                                viewModel.continueOfflineDiarization(for: meeting.id, audioURL: url)
                             }
                         } label: {
                             Label(retryButtonLabel, systemImage: retryButtonIcon)
@@ -122,7 +111,7 @@ struct ReviewingView: View {
                     }
                 }
                 Spacer()
-                if let text = diarizationProgressText {
+                if let text = analysisStatsText {
                     Text(text)
                         .font(.caption)
                         .foregroundStyle(diarizationProgressDone ? Color.secondary : Color.orange)

@@ -59,6 +59,28 @@ extension DatabaseManager {
             throw DBError.executeFailed(lastError)
         }
     }
+    
+    /// 清除单个联系人的声纹特征
+    func clearContactEmbedding(contactId: String) throws {
+        let sql = "UPDATE contacts SET voice_embedding = NULL WHERE id = ?"
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            throw DBError.prepareFailed(lastError)
+        }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, contactId.cString, -1, SQLITE_TRANSIENT)
+        guard sqlite3_step(stmt) == SQLITE_DONE else {
+            throw DBError.executeFailed(lastError)
+        }
+    }
+    
+    /// 清除所有联系人的声纹特征
+    func clearAllContactEmbeddings() throws {
+        let sql = "UPDATE contacts SET voice_embedding = NULL"
+        guard sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK else {
+            throw DBError.executeFailed(lastError)
+        }
+    }
 
     func fetchContactsWithEmbeddings() -> [(id: String, name: String, embedding: [Float])] {
         let sql = "SELECT id, name, voice_embedding FROM contacts WHERE voice_embedding IS NOT NULL"

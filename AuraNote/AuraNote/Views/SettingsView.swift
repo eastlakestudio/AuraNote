@@ -9,17 +9,15 @@ func loc(_ key: String) -> String {
 
 let zhLocale: [String: String] = [
     "settings": "系统配置", "save": "保存",
-    "speech_model": "语音识别模型", "downloaded": "已下载",
-    "cache": "缓存", "model_label": "模型", "redownload": "重新下载",
+    "speech_model": "语音识别模型", "downloaded": "已下载", "model_label": "模型", "redownload_hint": "点击重新下载模型", "redownload_confirm_title": "重新下载模型", "redownload_confirm_msg": "重新下载将覆盖现有模型文件，需重新从网络下载约 1.6 GB 数据。确定要继续吗？", "redownload_confirm_ok": "重新下载",
     "china_mirror": "HF-Mirror", "huggingface": "HuggingFace",
-    "about_desc": "本地离线会议纪要系统  |  WhisperKit + FluidAudio",
+    "about_desc": "本地离线会议纪要系统  |  WhisperKit + sherpa-onnx",
     "about_copyright": "© 2026 Eastlake Studio. 保留所有权利。",
-    "about_feature_desc": "听纪是一款完全本地离线运行的智能会议纪要系统。\n基于 WhisperKit 语音识别引擎与 FluidAudio 声纹分离技术，\n支持实时录音转写、离线高精度转写、多说话人声纹分离与匹配。\n所有音频数据均在本地处理，无需联网，保障隐私安全。",
-    "about_feature_desc_en": "AuraNote is a fully offline intelligent meeting minutes system.\nPowered by WhisperKit speech recognition and FluidAudio voiceprint diarization,\nit supports real-time transcription, offline high-accuracy transcription,\nand multi-speaker voiceprint separation & matching.\nAll audio data is processed locally — no internet required, ensuring complete privacy.",
+    "about_feature_desc": "听纪是一款完全本地离线运行的智能会议纪要系统。\n基于 WhisperKit 语音识别引擎与 sherpa-onnx 声纹分离技术，\n支持实时录音转写、离线高精度转写、多说话人声纹分离与匹配。\n所有音频数据均在本地处理，无需联网，保障隐私安全。",
+    "about_feature_desc_en": "AuraNote is a fully offline intelligent meeting minutes system.\nPowered by WhisperKit speech recognition and sherpa-onnx voiceprint diarization,\nit supports real-time transcription, offline high-accuracy transcription,\nand multi-speaker voiceprint separation & matching.\nAll audio data is processed locally — no internet required, ensuring complete privacy.",
     "copyright": "© 2026 Eastlake Studio",
     "model_name": "模型名称",
     "zhipu": "智谱AI",
-    "err_no_path": "请先选择有效的缓存文件夹",
     "err_model_not_downloaded": "语音模型未下载\n请前往「系统配置」选择存储路径并下载模型",
     "err_model_load_failed": "语音模型加载失败\n请前往「系统配置」重新下载模型",
     "err_start_record_failed": "启动录音失败",
@@ -30,13 +28,12 @@ let zhLocale: [String: String] = [
     "err_create_meeting_failed": "创建会议失败",
     "err_unsupported_audio_format": "不支持的音频格式",
     "err_file_copy_failed": "文件复制失败",
-    "downloading": "下载中...",
     "click_to_download": "点击下载",
-    "not_downloaded": "未下载",
     "voice_model_not_ready": "语音模型未下载",
+    "model_not_downloaded_banner_title": "语音模型尚未下载",
+    "model_not_downloaded_banner_desc": "点击此处前往系统配置下载模型，完成后即可使用全部功能",
     "voice_model_ready": "已就绪",
     "model_downloading": "正在下载语音模型...",
-    "select_path_hint": "请选择存储路径",
     "settings_saved": "配置已保存",
     "download_error_label": "下载失败",
     "status_ready": "准备就绪",
@@ -115,6 +112,19 @@ let zhLocale: [String: String] = [
     "delete_meeting_clips_msg": "确定删除「%@」的全部 %d 条发言记录吗？此操作不可撤销。",
     "clear_all_clips": "全部清空",
     "clear_all_clips_msg": "确定清空所有人员的全部发言记录吗？此操作不可撤销。",
+    "clear_voiceprint": "清除声纹",
+    "clear_voiceprint_msg": "确定清除「%@」的声纹特征吗？清除后需重新录制/分析才能再次匹配。",
+    "voiceprint_registered": "已注册声纹",
+    "voiceprint_not_registered": "未注册声纹",
+    "clear_all_voiceprints": "清除所有声纹",
+    "clear_all_voiceprints_msg": "确定清除所有联系人的声纹特征吗？此操作不可撤销。",
+    "batch_select": "批量选择",
+    "select_all": "全选",
+    "batch_delete_count": "删除(%d)",
+    "batch_delete_clips": "批量删除发言",
+    "batch_delete_clips_msg": "确定删除选中的 %d 条发言记录吗？此操作不可撤销。",
+    "batch_delete_contacts": "批量删除发言人",
+    "batch_delete_contacts_msg": "确定删除选中的 %d 位发言人吗？此操作不可撤销。",
     "personnel_list": "人员列表",
     "add_person": "添加人员",
     "no_personnel": "暂无人员",
@@ -126,6 +136,7 @@ let zhLocale: [String: String] = [
     "personnel_overview": "人员总览",
     "total": "总计",
     "people_unit": "人",
+    "sentences_unit": "句",
     "no_speech_records": "暂无发言记录",
     "speech_count_fmt": "%d 条发言 · %d 场会议",
         "speech_count_fmt_short": "%d 条",
@@ -212,11 +223,6 @@ let zhLocale: [String: String] = [
     "default_meeting_title": "会议记录_%@",
     "audio_file_not_found_diag": "录音文件未找到（%@.* 不存在于 Documents 目录）",
     "audio_file_missing_diag": "录音文件 %@ 不存在，但发现相关文件: %@",
-    // 数据存储路径
-    "data_storage": "数据存储",
-    "data_storage_desc": "录音文件和转写数据库的存储目录。修改后新建的录音将保存到新路径，已有数据不会自动迁移。",
-    "data_storage_path": "存储路径",
-    "select_data_path_hint": "默认使用 App 文档目录",
     // 算法参数配置
     "algo_params": "算法参数",
     "algo_params_desc": "调整语音识别与声纹分离算法的基础参数，修改后即时生效。",
@@ -236,13 +242,26 @@ let zhLocale: [String: String] = [
     "base_gain": "基础增益",
     "base_gain_desc": "中高电平语音的基础增益",
     "vad_params": "语音活动检测",
+    "voice_segmentation": "语音分段与转写",
+    "speaker_recognition": "声纹处理",
     "speaker_diarization": "声纹分离",
     "clustering_threshold": "聚类阈值",
-    "clustering_threshold_desc": "值越高区分越严格，越细分说话人",
+    "clustering_threshold_desc": "余弦距离阈值 (0~2)：越低越细分，说话人越多",
+    "incremental_clustering_distance": "增量聚类距离",
+    "incremental_clustering_distance_desc": "逐段合并阈值 (0~2)：越低越保守，避免异人误合并",
+    "cluster_merge_distance": "聚类合并距离",
+    "cluster_merge_distance_desc": "簇级合并阈值 (0~2)：平均声纹更稳定，可比逐段阈值宽松",
+    "max_diarization_speakers": "最大说话人数",
     "matching_threshold": "匹配阈值",
     "matching_threshold_desc": "声纹匹配的最低余弦相似度",
     "high_confidence_threshold": "高置信度阈值",
     "high_confidence_threshold_desc": "高于此值自动绑定到已知联系人",
+    "live_matching_threshold": "实时匹配阈值",
+    "live_matching_threshold_desc": "实时录音中声纹匹配的余弦相似度最低分（短片段声纹质量较低，阈值可设更低）",
+    "min_duration_on": "最短语音段",
+    "min_duration_on_desc": "sherpa-onnx 声纹分离的最短语音段时长（秒），太短会产生碎段",
+    "min_duration_off": "最小静音间隔",
+    "min_duration_off_desc": "sherpa-onnx 声纹分离的最小静音间隔（秒），更小 = 更精细的切分",
     "consumer_poll_interval": "消费轮询间隔",
     "consumer_poll_interval_desc": "离线转写消费者从队列取数据的间隔",
     "max_chunk_duration": "最大片段时长",
@@ -263,20 +282,23 @@ let zhLocale: [String: String] = [
     "hint_more_tolerant": "更宽容",
     "hint_fewer_speakers": "更少人",
     "hint_more_speakers": "更多人",
+    "hint_more_sensitive": "更灵敏",
+    "hint_more_stable": "更稳定",
+    "hint_finer_grained": "更精细",
+    "hint_more_relaxed": "更宽松",
 ] 
 let enLocale: [String: String] = [
     "settings": "Settings", "save": "Save",
     "speech_model": "Speech Recognition", "downloaded": "Downloaded",
-    "cache": "Cache", "model_label": "Model", "redownload": "Re-download",
+    "cache": "Cache", "model_label": "Model", "redownload_hint": "Click to re-download", "redownload_confirm_title": "Re-download Model", "redownload_confirm_msg": "This will overwrite the existing model and re-download ~1.6 GB from the network. Are you sure you want to continue?", "redownload_confirm_ok": "Re-download",
     "china_mirror": "HF-Mirror", "huggingface": "HuggingFace",
-    "about_desc": "Offline Meeting Minutes  |  WhisperKit + FluidAudio",
+    "about_desc": "Offline Meeting Minutes  |  WhisperKit + sherpa-onnx",
     "about_copyright": "© 2026 Eastlake Studio. All rights reserved.",
-    "about_feature_desc": "AuraNote is a fully offline intelligent meeting minutes system.\nPowered by WhisperKit speech recognition and FluidAudio voiceprint diarization,\nit supports real-time transcription, offline high-accuracy transcription,\nand multi-speaker voiceprint separation & matching.\nAll audio data is processed locally — no internet required, ensuring complete privacy.",
-    "about_feature_desc_en": "AuraNote is a fully offline intelligent meeting minutes system.\nPowered by WhisperKit speech recognition and FluidAudio voiceprint diarization,\nit supports real-time transcription, offline high-accuracy transcription,\nand multi-speaker voiceprint separation & matching.\nAll audio data is processed locally — no internet required, ensuring complete privacy.",
+    "about_feature_desc": "AuraNote is a fully offline intelligent meeting minutes system.\nPowered by WhisperKit speech recognition and sherpa-onnx voiceprint diarization,\nit supports real-time transcription, offline high-accuracy transcription,\nand multi-speaker voiceprint separation & matching.\nAll audio data is processed locally — no internet required, ensuring complete privacy.",
+    "about_feature_desc_en": "AuraNote is a fully offline intelligent meeting minutes system.\nPowered by WhisperKit speech recognition and sherpa-onnx voiceprint diarization,\nit supports real-time transcription, offline high-accuracy transcription,\nand multi-speaker voiceprint separation & matching.\nAll audio data is processed locally — no internet required, ensuring complete privacy.",
     "copyright": "© 2026 Eastlake Studio",
     "model_name": "Model Name",
     "zhipu": "Zhipu AI",
-    "err_no_path": "Please select a valid cache folder first",
     "err_model_not_downloaded": "Voice model not downloaded\nPlease go to Settings to select a storage path and download the model",
     "err_model_load_failed": "Voice model failed to load\nPlease go to Settings to re-download the model",
     "err_start_record_failed": "Failed to start recording",
@@ -287,13 +309,12 @@ let enLocale: [String: String] = [
     "err_create_meeting_failed": "Failed to create meeting",
     "err_unsupported_audio_format": "Unsupported audio format",
     "err_file_copy_failed": "File copy failed",
-    "downloading": "Downloading...",
     "click_to_download": "Download",
-    "not_downloaded": "Not downloaded",
     "voice_model_not_ready": "Voice model not downloaded",
+    "model_not_downloaded_banner_title": "Voice model not downloaded",
+    "model_not_downloaded_banner_desc": "Tap to download the model in Settings to unlock all features",
     "voice_model_ready": "Ready",
     "model_downloading": "Downloading voice model...",
-    "select_path_hint": "Please select a storage path",
     "settings_saved": "Settings saved",
     "download_error_label": "Download failed",
     "status_ready": "Ready",
@@ -372,6 +393,19 @@ let enLocale: [String: String] = [
     "delete_meeting_clips_msg": "Delete all %d clips from '%@'? This cannot be undone.",
     "clear_all_clips": "Clear All",
     "clear_all_clips_msg": "Clear all speech records for all personnel? This cannot be undone.",
+    "clear_voiceprint": "Clear Voiceprint",
+    "clear_voiceprint_msg": "Clear the voiceprint for '%@'? Re-recording/re-analysis will be needed for matching again.",
+    "voiceprint_registered": "Voiceprint registered",
+    "voiceprint_not_registered": "No voiceprint",
+    "clear_all_voiceprints": "Clear All Voiceprints",
+    "clear_all_voiceprints_msg": "Clear all voiceprints for all contacts? This cannot be undone.",
+    "batch_select": "Batch Select",
+    "select_all": "Select All",
+    "batch_delete_count": "Delete(%d)",
+    "batch_delete_clips": "Batch Delete",
+    "batch_delete_clips_msg": "Delete %d selected speech records? This cannot be undone.",
+    "batch_delete_contacts": "Batch Delete Contacts",
+    "batch_delete_contacts_msg": "Delete %d selected contacts? This cannot be undone.",
     "personnel_list": "Personnel List",
     "add_person": "Add Person",
     "no_personnel": "No Personnel",
@@ -383,6 +417,7 @@ let enLocale: [String: String] = [
     "personnel_overview": "Personnel Overview",
     "total": "Total",
     "people_unit": "",
+    "sentences_unit": " sentences",
     "no_speech_records": "No Speech Records",
     "speech_count_fmt": "%d speeches · %d meetings",
         "speech_count_fmt_short": "%d clips",
@@ -470,10 +505,6 @@ let enLocale: [String: String] = [
     "audio_file_not_found_diag": "Audio file not found (%@.* does not exist in Documents directory)",
     "audio_file_missing_diag": "Audio file %@ not found, but found related files: %@",
     // Data Storage Path
-    "data_storage": "Data Storage",
-    "data_storage_desc": "Directory for recording files and transcription database. New recordings will be saved to the new path; existing data will not be auto-migrated.",
-    "data_storage_path": "Storage Path",
-    "select_data_path_hint": "Default: App Documents directory",
     // Algorithm Parameters
     "algo_params": "Algorithm Parameters",
     "algo_params_desc": "Adjust base parameters for speech recognition and voiceprint diarization. Changes take effect immediately.",
@@ -493,13 +524,26 @@ let enLocale: [String: String] = [
     "base_gain": "Base Gain",
     "base_gain_desc": "Base gain for mid-high level speech",
     "vad_params": "Voice Activity Detection",
+    "voice_segmentation": "Voice Segmentation & Transcription",
+    "speaker_recognition": "Speaker Recognition",
     "speaker_diarization": "Speaker Diarization",
     "clustering_threshold": "Clustering Threshold",
-    "clustering_threshold_desc": "Higher values produce stricter speaker separation",
+    "clustering_threshold_desc": "Cosine distance (0~2): lower = more speakers",
+    "incremental_clustering_distance": "Incremental Clustering Dist",
+    "incremental_clustering_distance_desc": "Per-segment merge threshold (0~2): lower = more conservative",
+    "cluster_merge_distance": "Cluster Merge Distance",
+    "cluster_merge_distance_desc": "Cluster-level merge threshold (0~2): avg embeddings are stabler, can be looser",
+    "max_diarization_speakers": "Max Speakers",
     "matching_threshold": "Matching Threshold",
     "matching_threshold_desc": "Minimum cosine similarity for voiceprint matching",
     "high_confidence_threshold": "High Confidence Threshold",
     "high_confidence_threshold_desc": "Auto-bind to known contacts above this score",
+    "live_matching_threshold": "Real-time Matching Threshold",
+    "live_matching_threshold_desc": "Min cosine similarity for voiceprint matching during live recording (lower for short clips)",
+    "min_duration_on": "Min Speech Duration",
+    "min_duration_on_desc": "Minimum speech segment duration (s) for sherpa-onnx diarization",
+    "min_duration_off": "Min Silence Gap",
+    "min_duration_off_desc": "Minimum silence gap (s) for sherpa-onnx diarization, smaller = finer split",
     "consumer_poll_interval": "Consumer Poll Interval",
     "consumer_poll_interval_desc": "Interval for offline transcription consumer to fetch data",
     "max_chunk_duration": "Max Chunk Duration",
@@ -520,6 +564,10 @@ let enLocale: [String: String] = [
     "hint_more_tolerant": "More Tolerant",
     "hint_fewer_speakers": "Fewer Speakers",
     "hint_more_speakers": "More Speakers",
+    "hint_more_sensitive": "More Sensitive",
+    "hint_more_stable": "More Stable",
+    "hint_finer_grained": "Finer Grained",
+    "hint_more_relaxed": "More Relaxed",
 ]
 
 struct SettingsView: View {
@@ -527,6 +575,8 @@ struct SettingsView: View {
     @State private var showLangPicker = false
     @State private var downloadTask: Task<Void, Never>? = nil
     @State private var downloadStateVersion = 0
+    @State private var showRedownloadAlert = false
+    @State private var showSherpaOnnxTest = false
 
     private let labelWidth: CGFloat = 85
 
@@ -575,7 +625,7 @@ struct SettingsView: View {
                                 .foregroundStyle(.purple)
                             
                             VStack(spacing: 12) {
-                                // Row 1: 模型名称 + 下载状态
+                                // Row 1: 模型名称 + 状态操作
                                 HStack(spacing: 12) {
                                     Text(loc("model_label"))
                                         .font(.callout)
@@ -588,106 +638,56 @@ struct SettingsView: View {
                                     
                                     Spacer()
                                     
-                                    HStack(spacing: 4) {
-                                        if settings.currentModelDownloading {
-                                            ProgressView()
-                                                .controlSize(.small)
-                                                .frame(width: 12, height: 12)
-                                            Text(String(format: "%.0f%%", settings.currentModelProgress * 100))
-                                                .font(.caption)
-                                                .fontWeight(.medium)
-                                                .foregroundStyle(.blue)
-                                            Button {
-                                                downloadTask?.cancel()
-                                            } label: {
-                                                Image(systemName: "xmark.circle.fill")
-                                                    .foregroundStyle(.red)
-                                                    .font(.caption)
-                                            }
-                                            .buttonStyle(.plain)
-                                        } else if isModelDownloaded {
-                                            Circle().fill(Color.green).frame(width: 6, height: 6)
-                                            Text(loc("downloaded"))
-                                                .font(.caption)
-                                                .fontWeight(.medium)
-                                                .foregroundStyle(.green)
-                                        } else {
-                                            Circle().fill(Color.red).frame(width: 6, height: 6)
-                                            Text(loc("not_downloaded"))
-                                                .font(.caption)
-                                                .fontWeight(.medium)
-                                                .foregroundStyle(.red)
-                                        }
-                                    }
-                                    .padding(.horizontal, 10)
-                                    .padding(.vertical, 4)
-                                    .frame(minWidth: 120, maxWidth: 120)
-                                    .background(settings.currentModelDownloading ? Color.blue.opacity(0.12) : (isModelDownloaded ? Color.green.opacity(0.12) : Color.red.opacity(0.12)))
-                                    .cornerRadius(6)
-                                }
-                                
-                                // Row 2: 存储地址 + 下载按钮
-                                HStack(spacing: 12) {
-                                    Text(loc("cache"))
-                                        .font(.callout)
-                                        .foregroundStyle(.secondary)
-                                        .frame(width: labelWidth, alignment: .leading)
-                                    
-                                    HStack {
-                                        let pathExists = !settings.modelPath.isEmpty && FileManager.default.fileExists(atPath: settings.modelPath)
-                                        if settings.modelPath.isEmpty {
-                                            Text(loc("select_path_hint"))
-                                                .font(.callout)
-                                                .foregroundStyle(.gray.opacity(0.8))
-                                        } else if !pathExists {
-                                            Text("\(settings.modelPath) (\(loc("path_not_exist")))")
-                                                .font(.callout)
-                                                .foregroundStyle(.red)
-                                                .lineLimit(1)
-                                                .truncationMode(.middle)
-                                        } else {
-                                            Text(settings.modelPath)
-                                                .font(.callout)
-                                                .lineLimit(1)
-                                                .truncationMode(.middle)
-                                        }
-                                        Spacer()
-                                        Button(action: selectPath) {
-                                            Image(systemName: "folder")
-                                                .font(.callout)
-                                                .foregroundStyle(.purple)
-                                        }
-                                        .buttonStyle(.plain)
-                                    }
-                                    .padding(.horizontal, 10)
-                                    .padding(.vertical, 6)
-                                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.04)))
-                                    
-                                    // 使用 PressableButton 替代 Button：macOS 上 Button 点击区域受限
                                     PressableButton(
-                                        disabled: settings.currentModelDownloading,
-                                        action: downloadModel
+                                        disabled: false,
+                                        action: {
+                                            if !settings.currentModelDownloading {
+                                                if isModelDownloaded {
+                                                    showRedownloadAlert = true
+                                                } else {
+                                                    downloadModel()
+                                                }
+                                            }
+                                        }
                                     ) {
                                         HStack(spacing: 4) {
                                             if settings.currentModelDownloading {
                                                 ProgressView().controlSize(.small).frame(width: 12, height: 12)
-                                                Text(loc("downloading"))
+                                                Text(String(format: "%.0f%%", settings.currentModelProgress * 100))
                                                     .font(.caption)
                                                     .fontWeight(.medium)
+                                                Button {
+                                                    downloadTask?.cancel()
+                                                } label: {
+                                                    Image(systemName: "xmark.circle.fill")
+                                                        .foregroundStyle(.red)
+                                                        .font(.caption)
+                                                }
+                                                .buttonStyle(.plain)
+                                            } else if isModelDownloaded {
+                                                Circle().fill(Color.green).frame(width: 6, height: 6)
+                                                Text(loc("downloaded"))
+                                                    .font(.caption)
+                                                    .fontWeight(.medium)
+                                                Image(systemName: "arrow.clockwise")
+                                                    .font(.caption)
                                             } else {
-                                                Image(systemName: isModelDownloaded ? "arrow.clockwise" : "arrow.down.to.line")
-                                                Text(isModelDownloaded ? loc("redownload") : loc("click_to_download"))
+                                                Circle().fill(Color.red).frame(width: 6, height: 6)
+                                                Text(loc("click_to_download"))
                                                     .font(.caption)
                                                     .fontWeight(.medium)
+                                                Image(systemName: "arrow.down.to.line")
+                                                    .font(.caption)
                                             }
                                         }
                                         .padding(.horizontal, 10)
                                         .padding(.vertical, 4)
                                         .frame(minWidth: 120, maxWidth: 120)
-                                        .background(settings.currentModelDownloading ? Color.gray.opacity(0.12) : (isModelDownloaded ? Color.orange.opacity(0.12) : Color.blue.opacity(0.12)))
-                                        .foregroundStyle(settings.currentModelDownloading ? .gray : (isModelDownloaded ? .orange : .blue))
+                                        .background(settings.currentModelDownloading ? Color.blue.opacity(0.12) : (isModelDownloaded ? Color.green.opacity(0.12) : Color.blue.opacity(0.12)))
+                                        .foregroundStyle(settings.currentModelDownloading ? .blue : (isModelDownloaded ? .green : .blue))
                                         .cornerRadius(6)
                                     }
+                                    .help(isModelDownloaded ? loc("redownload_hint") : "")
                                 }
                                 
                                 if let err = settings.currentModelError {
@@ -705,8 +705,37 @@ struct SettingsView: View {
                         .background(RoundedRectangle(cornerRadius: 12).fill(.background.opacity(0.4)))
                         .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.primary.opacity(0.08), lineWidth: 1))
 
-                        // Card 2: 数据存储路径
-                        dataStorageCard
+                        // Card 2: sherpa-onnx 声纹分离测试
+                        VStack(alignment: .leading, spacing: 12) {
+                            HStack {
+                                Label("sherpa-onnx 测试", systemImage: "waveform.path.ecg")
+                                    .font(.headline)
+                                    .foregroundStyle(.blue)
+                                Spacer()
+                                Button {
+                                    showSherpaOnnxTest = true
+                                } label: {
+                                    HStack(spacing: 4) {
+                                        Image(systemName: "play.circle")
+                                        Text("打开测试")
+                                    }
+                                    .font(.caption)
+                                    .fontWeight(.medium)
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 4)
+                                    .background(Color.blue.opacity(0.12))
+                                    .foregroundStyle(.blue)
+                                    .cornerRadius(6)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                            Text("使用 sherpa-onnx (ONNX Runtime) 进行离线声纹分离测试")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(20)
+                        .background(RoundedRectangle(cornerRadius: 12).fill(.background.opacity(0.4)))
+                        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.primary.opacity(0.08), lineWidth: 1))
 
                         // Card 3: 算法参数配置
                         algoParamsCard
@@ -738,6 +767,15 @@ struct SettingsView: View {
         .onAppear { load() }
         .onReceive(NotificationCenter.default.publisher(for: SettingsManager.downloadStateDidChangeNotification)) { _ in
             downloadStateVersion += 1
+        }
+        .alert(loc("redownload_confirm_title"), isPresented: $showRedownloadAlert) {
+            Button(loc("cancel"), role: .cancel) { }
+            Button(loc("redownload_confirm_ok"), role: .destructive) { downloadModel() }
+        } message: {
+            Text(loc("redownload_confirm_msg"))
+        }
+        .sheet(isPresented: $showSherpaOnnxTest) {
+            SherpaOnnxTestView()
         }
     }
 
@@ -785,18 +823,13 @@ struct SettingsView: View {
                 algoCell(loc("target_peak"), value: $settings.targetPeak,
                          range: 0.3...0.95, fmt: "%.2f",
                          hintLow: loc("hint_quieter"), hintHigh: loc("hint_louder"))
-                algoCell(loc("max_gain"), value: $settings.maxGain,
-                         range: 1.0...30.0, fmt: "%.1f", unit: loc("unit_times"),
-                         hintLow: loc("hint_lower"), hintHigh: loc("hint_higher"))
                 algoCell(loc("base_gain"), value: $settings.baseGain,
                          range: 1.0...5.0, fmt: "%.1f", unit: loc("unit_times"),
                          hintLow: loc("hint_lower"), hintHigh: loc("hint_higher"))
-                // 占位让 base_gain 独占左列
-                Color.clear.frame(height: 0)
             }
             
-            // ---- 语音活动检测 ----
-            algoSectionHeader(loc("vad_params"), "mic.badge.plus")
+            // ---- 语音分段与转写 ----
+            algoSectionHeader(loc("voice_segmentation"), "text.bubble")
             
             LazyVGrid(columns: algoColumns, spacing: 10) {
                 algoCell(loc("pause_window"), value: $settings.pauseWindow,
@@ -805,95 +838,42 @@ struct SettingsView: View {
                 algoCell(loc("max_chunk_duration"), value: $settings.maxChunkDuration,
                          range: 3.0...20.0, fmt: "%.0f", unit: loc("unit_seconds"),
                          hintLow: loc("hint_shorter"), hintHigh: loc("hint_longer"))
+                algoCell(loc("min_duration_on"), value: $settings.minDurationOn,
+                         range: 0.1...2.0, fmt: "%.1f",
+                         hintLow: loc("hint_more_sensitive"), hintHigh: loc("hint_more_stable"))
+                algoCell(loc("min_duration_off"), value: $settings.minDurationOff,
+                         range: 0.1...2.0, fmt: "%.1f",
+                         hintLow: loc("hint_finer_grained"), hintHigh: loc("hint_more_relaxed"))
                 algoCell(loc("live_transcribe_interval"), value: $settings.liveTranscribeInterval,
                          range: 0.5...5.0, fmt: "%.1f", unit: loc("unit_seconds"),
                          hintLow: loc("hint_shorter"), hintHigh: loc("hint_longer"))
+                algoCell(loc("consumer_poll_interval"), value: $settings.consumerPollInterval,
+                         range: 0.1...1.0, fmt: "%.2f", unit: loc("unit_seconds"),
+                         hintLow: loc("hint_shorter"), hintHigh: loc("hint_longer"))
             }
             
-            // ---- 声纹分离 ----
-            algoSectionHeader(loc("speaker_diarization"), "person.2.wave.2")
+            // ---- 声纹处理 ----
+            algoSectionHeader(loc("speaker_recognition"), "person.2.wave.2")
             
             LazyVGrid(columns: algoColumns, spacing: 10) {
                 algoCell(loc("clustering_threshold"), value: $settings.clusteringThreshold,
-                         range: 0.5...0.95, fmt: "%.3f",
-                         hintLow: loc("hint_fewer_speakers"), hintHigh: loc("hint_more_speakers"))
+                         range: 0.5...1.5, fmt: "%.2f",
+                         hintLow: loc("hint_more_speakers"), hintHigh: loc("hint_fewer_speakers"))
+                algoCell(loc("incremental_clustering_distance"), value: $settings.incrementalClusteringDistance,
+                         range: 0.1...0.5, fmt: "%.2f",
+                         hintLow: loc("hint_more_speakers"), hintHigh: loc("hint_fewer_speakers"))
+                algoCell(loc("cluster_merge_distance"), value: $settings.clusterMergeDistance,
+                         range: 0.3...0.7, fmt: "%.2f",
+                         hintLow: loc("hint_more_speakers"), hintHigh: loc("hint_fewer_speakers"))
                 algoCell(loc("matching_threshold"), value: $settings.matchingThreshold,
                          range: 0.3...0.9, fmt: "%.3f",
                          hintLow: loc("hint_more_tolerant"), hintHigh: loc("hint_more_strict"))
                 algoCell(loc("high_confidence_threshold"), value: $settings.highConfidenceThreshold,
                          range: 0.5...0.95, fmt: "%.3f",
                          hintLow: loc("hint_more_lenient"), hintHigh: loc("hint_more_precise"))
-                algoCell(loc("consumer_poll_interval"), value: $settings.consumerPollInterval,
-                         range: 0.1...1.0, fmt: "%.2f", unit: loc("unit_seconds"),
-                         hintLow: loc("hint_shorter"), hintHigh: loc("hint_longer"))
-            }
-        }
-        .padding(20)
-        .background(RoundedRectangle(cornerRadius: 12).fill(.background.opacity(0.4)))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.primary.opacity(0.08), lineWidth: 1))
-    }
-    
-    // MARK: - 数据存储路径卡片
-    
-    private var dataStorageCard: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Label(loc("data_storage"), systemImage: "externaldrive.fill")
-                .font(.headline)
-                .foregroundStyle(.teal)
-            
-            Text(loc("data_storage_desc"))
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            
-            HStack(spacing: 12) {
-                Text(loc("data_storage_path"))
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .frame(width: labelWidth, alignment: .leading)
-                
-                HStack {
-                    if settings.dataPath.isEmpty {
-                        Text(loc("select_data_path_hint"))
-                            .font(.callout)
-                            .foregroundStyle(.gray.opacity(0.8))
-                    } else if !FileManager.default.fileExists(atPath: settings.dataPath) {
-                        Text("\(settings.dataPath) (\(loc("path_not_exist")))")
-                            .font(.callout)
-                            .foregroundStyle(.red)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    } else {
-                        Text(settings.dataPath)
-                            .font(.callout)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    }
-                    Spacer()
-                    Button(action: selectDataPath) {
-                        Image(systemName: "folder")
-                            .font(.callout)
-                            .foregroundStyle(.teal)
-                    }
-                    .buttonStyle(.plain)
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.04)))
-                
-                PressableButton(disabled: false, action: { settings.dataPath = "" }) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "arrow.counterclockwise")
-                        Text(loc("reset_defaults"))
-                    }
-                    .font(.caption)
-                    .fontWeight(.medium)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 4)
-                    .frame(minWidth: 120, maxWidth: 120)
-                    .background(Color.teal.opacity(0.12))
-                    .foregroundStyle(.teal)
-                    .cornerRadius(6)
-                }
+                algoCell(loc("live_matching_threshold"), value: $settings.liveMatchingThreshold,
+                         range: 0.3...0.8, fmt: "%.3f",
+                         hintLow: loc("hint_more_tolerant"), hintHigh: loc("hint_more_strict"))
             }
         }
         .padding(20)
@@ -959,33 +939,34 @@ struct SettingsView: View {
         settings.liveTranscribeInterval = 1.5
         settings.noiseGate = 0.002
         settings.targetPeak = 0.7
-        settings.maxGain = 10.0
         settings.baseGain = 1.5
-        settings.clusteringThreshold = 0.82
-        settings.matchingThreshold = 0.65
-        settings.highConfidenceThreshold = 0.7
+        settings.clusteringThreshold = 0.90
+        settings.incrementalClusteringDistance = 0.30
+        settings.clusterMergeDistance = 0.50
+        settings.minDurationOn = 0.5
+        settings.minDurationOff = 0.5
+        settings.matchingThreshold = 0.70
+        settings.highConfidenceThreshold = 0.75
+        settings.liveMatchingThreshold = 0.70
         settings.consumerPollInterval = 0.3
         settings.maxChunkDuration = 8.0
     }
 
     // MARK: - Helpers (Model)
 
-    /// 模型实际存储目录（modelPath 下的子路径）
+    /// 模型实际存储目录
     private var modelRepoPath: String {
-        guard !settings.modelPath.isEmpty else { return "" }
-        return URL(fileURLWithPath: settings.modelPath)
+        URL(fileURLWithPath: settings.modelPath)
             .appendingPathComponent("models/argmaxinc/whisperkit-coreml").path
     }
     
     private var isModelDownloaded: Bool {
-        guard !settings.modelPath.isEmpty else { return false }
         let voice = settings.selectedVoice
         // 正在下载的模型不算已下载，避免下载中误判为已完成
         let state = settings.downloadState(for: voice)
         if state.isDownloading { return false }
         let id = SettingsManager.supportedModelID
         let repoPath = modelRepoPath
-        guard !repoPath.isEmpty else { return false }
         let modelURL = URL(fileURLWithPath: repoPath).appendingPathComponent(id)
         
         var isDir: ObjCBool = false
@@ -998,17 +979,6 @@ struct SettingsView: View {
     }
     
     private func downloadModel() {
-        if settings.modelPath.isEmpty {
-            selectPath()
-        }
-        
-        if settings.modelPath.isEmpty {
-            var errState = settings.downloadState(for: settings.selectedVoice)
-            errState.error = loc("err_no_path")
-            settings.setDownloadState(errState, for: settings.selectedVoice)
-            return
-        }
-        
         let downloadingVoice = settings.selectedVoice
         let variant = SettingsManager.supportedModelID
         
@@ -1072,38 +1042,14 @@ struct SettingsView: View {
     private func load() {
         settings.load()
         // 检测已下载的模型版本
-        if !settings.modelPath.isEmpty {
-            let variant = SettingsManager.supportedModelID
-            let modelURL = URL(fileURLWithPath: modelRepoPath).appendingPathComponent(variant)
-            var isDir: ObjCBool = false
-            if FileManager.default.fileExists(atPath: modelURL.path, isDirectory: &isDir), isDir.boolValue {
-                settings.modelVersion = variant
-            }
+        let variant = SettingsManager.supportedModelID
+        let modelURL = URL(fileURLWithPath: modelRepoPath).appendingPathComponent(variant)
+        var isDir: ObjCBool = false
+        if FileManager.default.fileExists(atPath: modelURL.path, isDirectory: &isDir), isDir.boolValue {
+            settings.modelVersion = variant
         }
     }
     
-    private func selectPath() {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.directoryURL = URL(fileURLWithPath: settings.modelPath.isEmpty ? NSHomeDirectory() : settings.modelPath)
-        if panel.runModal() == .OK, let url = panel.url {
-            settings.modelPath = url.path
-        }
-    }
-    
-    private func selectDataPath() {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.message = loc("data_storage_desc")
-        panel.prompt = "Select"
-        let startPath = settings.dataPath.isEmpty ? SettingsManager.defaultDataPath : settings.dataPath
-        panel.directoryURL = URL(fileURLWithPath: startPath)
-        if panel.runModal() == .OK, let url = panel.url {
-            settings.dataPath = url.path
-        }
-    }
 }
 
 // MARK: - 可交互按钮（替代 macOS 上 Button 点击区域受限问题，同时保留视觉反馈）

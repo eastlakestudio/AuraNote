@@ -7,8 +7,6 @@ actor WhisperService {
     private var pipe: WhisperKit?
     private(set) var isReady = false
     private(set) var isLoading = false
-    
-    private var defaultModelPath: String { SettingsManager.shared.defaultModelPath }
 
     /// 初始化并预加载模型（仅从本地磁盘加载，不访问网络）
     /// 模型必须先通过「系统配置」页面下载，否则抛出错误引导用户下载
@@ -20,10 +18,6 @@ actor WhisperService {
         let settings = SettingsManager.shared
         let modelID = SettingsManager.supportedModelID
         let basePath = settings.modelPath
-        if basePath.isEmpty {
-            throw NSError(domain: "WhisperService", code: 400,
-                userInfo: [NSLocalizedDescriptionKey: loc("model_not_downloaded_settings")])
-        }
         
         // 计算模型本地文件夹（与 SettingsView 下载目录结构一致）
         let primaryPath = "\(basePath)/models/argmaxinc/whisperkit-coreml/\(modelID)"
@@ -103,13 +97,14 @@ actor WhisperService {
             sampleLength: 224,
             skipSpecialTokens: true,
             withoutTimestamps: false,
-            compressionRatioThreshold: 2.4,  // WhisperKit 默认值，过滤循环重复幻觉
-            noSpeechThreshold: 0.6            // 静音过滤敏感度
+            compressionRatioThreshold: 2.0,  // large-v3 循环重复幻觉过滤
+            noSpeechThreshold: 0.65           // 静音过滤敏感度
         )
 
         var parsedSegments: [TranscriptSegment] = []
 
         AppLog.info("WhisperKit transcribe() call started")
+        AppLog.info("[Whisper DecodingOptions] task=\(options.task) language=\(options.language ?? "auto") temperature=\(options.temperature) tempFallbackCount=\(options.temperatureFallbackCount) tempIncrement=\(options.temperatureIncrementOnFallback) sampleLength=\(options.sampleLength) topK=\(options.topK) usePrefillPrompt=\(options.usePrefillPrompt) usePrefillCache=\(options.usePrefillCache) skipSpecialTokens=\(options.skipSpecialTokens) withoutTimestamps=\(options.withoutTimestamps) wordTimestamps=\(options.wordTimestamps) compressionRatioThreshold=\(options.compressionRatioThreshold.map { String($0) } ?? "nil") logProbThreshold=\(options.logProbThreshold.map { String($0) } ?? "nil") firstTokenLogProbThreshold=\(options.firstTokenLogProbThreshold.map { String($0) } ?? "nil") noSpeechThreshold=\(options.noSpeechThreshold.map { String($0) } ?? "nil") concurrentWorkers=\(options.concurrentWorkerCount) chunkingStrategy=\(options.chunkingStrategy.map { String(describing: $0) } ?? "nil")")
         let results = try await pipe.transcribe(audioPath: audioURL.path, decodeOptions: options)
         AppLog.info("WhisperKit transcribe() returned: \(results.first?.segments.count ?? 0) segments")
 
@@ -165,6 +160,7 @@ actor WhisperService {
         )
         
         // 使用 WhisperKit 的纯数组转写接口
+        AppLog.info("[Whisper Live DecodingOptions] task=\(options.task) language=\(options.language ?? "auto") temperature=\(options.temperature) tempFallbackCount=\(options.temperatureFallbackCount) sampleLength=\(options.sampleLength) compressionRatioThreshold=\(options.compressionRatioThreshold.map { String($0) } ?? "nil") noSpeechThreshold=\(options.noSpeechThreshold.map { String($0) } ?? "nil") skipSpecialTokens=\(options.skipSpecialTokens) withoutTimestamps=\(options.withoutTimestamps)")
         let results = try await pipe.transcribe(audioArray: audioArray, decodeOptions: options)
         
         guard let result = results.first else {

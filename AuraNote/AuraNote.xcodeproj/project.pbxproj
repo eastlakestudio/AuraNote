@@ -7,10 +7,10 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		B1C2D3E4F5A6B7C8D9E0F1A2 /* IncrementalSpeakerClustering.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2D3E4F5A6B7C8D9E0F1A2B3 /* IncrementalSpeakerClustering.swift */; };
 		0083EAB14F245E6C3B56FC15 /* AboutView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7516CD6D0AB2D42CAE05EB00 /* AboutView.swift */; };
 		05E191AAEB8679916CB2005C /* SettingsManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F78D6212479DA98D2FDA33D3 /* SettingsManager.swift */; };
 		09D5B913B9976E49DBCA2F0C /* DiarSharedState.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE0A79B459AB5216AF27E37D /* DiarSharedState.swift */; };
-		0B7C923E179469936C1DC8A7 /* FluidAudio in Frameworks */ = {isa = PBXBuildFile; productRef = E29D2CB566CB0EA007BA0347 /* FluidAudio */; };
 		0EEA1082C872870722CA261F /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B5BCF96CE20B1279DF702CC /* SettingsView.swift */; };
 		1115A8A8316623D08E78820A /* AuraNoteApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 847273DA53ECD3024C3385E2 /* AuraNoteApp.swift */; };
 		14304976F061C285CBAD0D70 /* SpeakerMatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCFC80FF72DB092E6E0CBF79 /* SpeakerMatcher.swift */; };
@@ -29,6 +29,7 @@
 		5A89CFA75D23226A19233B22 /* MeetingListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 952B04F23E5B9716D14D7DCB /* MeetingListView.swift */; };
 		6E167BEFD2C233B745EFABF8 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA05E8D9E26C0B88038E4DE1 /* Models.swift */; };
 		73CDF1BC899A1F3A94FF31BF /* DebugLogView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E78634C95E29732F47DA32B /* DebugLogView.swift */; };
+		8405940A9543AFCB197B7BF7 /* SherpaOnnxTestView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF13293AD6AD3F6F2A3D41E0 /* SherpaOnnxTestView.swift */; };
 		8C198B945AD17FB1B24C6932 /* DatabaseManagerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47CA492447BF5B777FA56256 /* DatabaseManagerTests.swift */; };
 		939492EA7DD0D3214276E090 /* DatabaseManager+SpeechClip.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4DFAC15A617A930DC5A42B2C /* DatabaseManager+SpeechClip.swift */; };
 		9FB0F4EDB2FA224A475D95BE /* RecordingViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8073FA324A101785C53399A /* RecordingViewModel.swift */; };
@@ -40,6 +41,7 @@
 		C1D280202EE9461EC4A197DE /* DatabaseManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F77486422B75B139827DA60 /* DatabaseManager.swift */; };
 		D5CA84A0D6C169B7C73A6615 /* KeychainHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 35B458292AF298F8EF6DF241 /* KeychainHelper.swift */; };
 		D8C2F993A15E50E50D727052 /* AudioPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E6BCE84C008ECA3C64C198F /* AudioPlayer.swift */; };
+		E1F0DA09B0BFC8A3FD19F1AD /* SherpaOnnxDiarizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AE27DEE54A2E83E11E3502C /* SherpaOnnxDiarizer.swift */; };
 		F0E97CB08F47BFACBBF60B7F /* ReviewingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5407127495AA20185E7E659F /* ReviewingView.swift */; };
 		F58814D5148E07D251F1BE99 /* SettingsManagerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9BFD42D5406878F197B6D168 /* SettingsManagerTests.swift */; };
 /* End PBXBuildFile section */
@@ -55,6 +57,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		C2D3E4F5A6B7C8D9E0F1A2B3 /* IncrementalSpeakerClustering.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IncrementalSpeakerClustering.swift; sourceTree = "<group>"; };
 		03B6E6EF00EB8D622D53DB52 /* ModelDownloadService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelDownloadService.swift; sourceTree = "<group>"; };
 		0E0D8630516D68651933DDEA /* AuraNote.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = AuraNote.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		35B458292AF298F8EF6DF241 /* KeychainHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainHelper.swift; sourceTree = "<group>"; };
@@ -74,6 +77,7 @@
 		5B5BCF96CE20B1279DF702CC /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		669322B52408C509F7CC31B8 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		6A0171E8F959338F58C7188D /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		6AE27DEE54A2E83E11E3502C /* SherpaOnnxDiarizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SherpaOnnxDiarizer.swift; sourceTree = "<group>"; };
 		6B8CBDE2D1DCB0E0A8858F6F /* MeetingListViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingListViewModel.swift; sourceTree = "<group>"; };
 		6E78634C95E29732F47DA32B /* DebugLogView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugLogView.swift; sourceTree = "<group>"; };
 		7516CD6D0AB2D42CAE05EB00 /* AboutView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AboutView.swift; sourceTree = "<group>"; };
@@ -83,6 +87,7 @@
 		952B04F23E5B9716D14D7DCB /* MeetingListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingListView.swift; sourceTree = "<group>"; };
 		9BFD42D5406878F197B6D168 /* SettingsManagerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsManagerTests.swift; sourceTree = "<group>"; };
 		A98FD31FA2CD50211ACAC2CC /* DiarizationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiarizationService.swift; sourceTree = "<group>"; };
+		AF13293AD6AD3F6F2A3D41E0 /* SherpaOnnxTestView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SherpaOnnxTestView.swift; sourceTree = "<group>"; };
 		BA05E8D9E26C0B88038E4DE1 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		C8073FA324A101785C53399A /* RecordingViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingViewModel.swift; sourceTree = "<group>"; };
 		C8832094277C1EB4D20ACE58 /* Logger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Logger.swift; sourceTree = "<group>"; };
@@ -100,7 +105,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				27E5DF48AC1D3F6D7A5243E8 /* WhisperKit in Frameworks */,
-				0B7C923E179469936C1DC8A7 /* FluidAudio in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -134,6 +138,7 @@
 		2AE8DD08D8E198AA8A268996 /* Services */ = {
 			isa = PBXGroup;
 			children = (
+				C2D3E4F5A6B7C8D9E0F1A2B3 /* IncrementalSpeakerClustering.swift */,
 				3E6BCE84C008ECA3C64C198F /* AudioPlayer.swift */,
 				CD4CB2A5248F793C5417C495 /* AudioRecorder.swift */,
 				4F77486422B75B139827DA60 /* DatabaseManager.swift */,
@@ -146,6 +151,7 @@
 				C8832094277C1EB4D20ACE58 /* Logger.swift */,
 				03B6E6EF00EB8D622D53DB52 /* ModelDownloadService.swift */,
 				F78D6212479DA98D2FDA33D3 /* SettingsManager.swift */,
+				6AE27DEE54A2E83E11E3502C /* SherpaOnnxDiarizer.swift */,
 				94C95296CE1BAB1E6C22F297 /* SpeakerAlignmentService.swift */,
 				CCFC80FF72DB092E6E0CBF79 /* SpeakerMatcher.swift */,
 				4846CF0CF994406C02B13248 /* WhisperService.swift */,
@@ -184,6 +190,7 @@
 				394E5061EAE6DBB0A06E9D26 /* RecordingView.swift */,
 				5407127495AA20185E7E659F /* ReviewingView.swift */,
 				5B5BCF96CE20B1279DF702CC /* SettingsView.swift */,
+				AF13293AD6AD3F6F2A3D41E0 /* SherpaOnnxTestView.swift */,
 				513A7CD37B3AFB757108CA04 /* UnifiedTranscriptEditor.swift */,
 			);
 			path = Views;
@@ -231,6 +238,8 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 52D704DE002AFCD03B9874F6 /* Build configuration list for PBXNativeTarget "AuraNote" */;
 			buildPhases = (
+				4E170424085567452FB914A4 /* Embed SherpaOnnx Libraries */,
+				7AE392F7FEC32251D05AEEAA /* Copy SherpaOnnx Models */,
 				7016107181A60D55EFCC299B /* Sources */,
 				FAAD475F3CB36607A88D378A /* Resources */,
 				C5D0ACCCF0D8D2F5942F38E0 /* Frameworks */,
@@ -242,7 +251,6 @@
 			name = AuraNote;
 			packageProductDependencies = (
 				C40E8AF44D5785393BDBAA56 /* WhisperKit */,
-				E29D2CB566CB0EA007BA0347 /* FluidAudio */,
 			);
 			productName = AuraNote;
 			productReference = 0E0D8630516D68651933DDEA /* AuraNote.app */;
@@ -275,7 +283,6 @@
 			mainGroup = 3E00E726D491E4E971BEC133;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				4B5372E24ABB1B319E7FAD33 /* XCRemoteSwiftPackageReference "FluidAudio" */,
 				93DDE6E584C6928ABB67DEA6 /* XCRemoteSwiftPackageReference "WhisperKit" */,
 			);
 			preferredProjectObjectVersion = 77;
@@ -300,11 +307,53 @@
 		};
 /* End PBXResourcesBuildPhase section */
 
+/* Begin PBXShellScriptBuildPhase section */
+		4E170424085567452FB914A4 /* Embed SherpaOnnx Libraries */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Embed SherpaOnnx Libraries";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -e\nFRAMEWORKS_DIR=\"${BUILT_PRODUCTS_DIR}/${FRAMEWORKS_FOLDER_PATH}\"\nmkdir -p \"$FRAMEWORKS_DIR\"\nfor dylib in libsherpa-onnx-c-api.dylib libsherpa-onnx-cxx-api.dylib libonnxruntime.1.27.0.dylib libonnxruntime.dylib; do\n  cp -f \"${SRCROOT}/Libraries/sherpa-onnx/lib/$dylib\" \"$FRAMEWORKS_DIR/\"\ndone\n";
+		};
+		7AE392F7FEC32251D05AEEAA /* Copy SherpaOnnx Models */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Copy SherpaOnnx Models";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -e\nMODELS_DIR=\"${BUILT_PRODUCTS_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/sherpa-onnx-models\"\nmkdir -p \"$MODELS_DIR\"\ncp -R \"${SRCROOT}/Libraries/sherpa-onnx/models/\"* \"$MODELS_DIR/\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		7016107181A60D55EFCC299B /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B1C2D3E4F5A6B7C8D9E0F1A2 /* IncrementalSpeakerClustering.swift in Sources */,
 				0083EAB14F245E6C3B56FC15 /* AboutView.swift in Sources */,
 				D8C2F993A15E50E50D727052 /* AudioPlayer.swift in Sources */,
 				3DFBD7585040BC9D7D8811D5 /* AudioRecorder.swift in Sources */,
@@ -331,6 +380,8 @@
 				F0E97CB08F47BFACBBF60B7F /* ReviewingView.swift in Sources */,
 				05E191AAEB8679916CB2005C /* SettingsManager.swift in Sources */,
 				0EEA1082C872870722CA261F /* SettingsView.swift in Sources */,
+				E1F0DA09B0BFC8A3FD19F1AD /* SherpaOnnxDiarizer.swift in Sources */,
+				8405940A9543AFCB197B7BF7 /* SherpaOnnxTestView.swift in Sources */,
 				51730AE847AECCB61F19C328 /* SpeakerAlignmentService.swift in Sources */,
 				14304976F061C285CBAD0D70 /* SpeakerMatcher.swift in Sources */,
 				2B83CB8ACA069A7053BCDD8A /* UnifiedTranscriptEditor.swift in Sources */,
@@ -365,10 +416,9 @@
 				CODE_SIGN_ENTITLEMENTS = AuraNote/AuraNote.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				INFOPLIST_FILE = AuraNote/Info.plist;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-				);
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
+				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/Libraries/sherpa-onnx/lib";
+				OTHER_LDFLAGS = "$(inherited) -lsherpa-onnx-c-api";
 				PRODUCT_BUNDLE_IDENTIFIER = com.eastlakestudio.auranote;
 				PRODUCT_NAME = AuraNote;
 				SDKROOT = auto;
@@ -376,6 +426,7 @@
 				SUPPORTS_MACCATALYST = NO;
 				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = YES;
 				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = YES;
+				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/Libraries/sherpa-onnx";
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Debug;
@@ -387,10 +438,9 @@
 				CODE_SIGN_ENTITLEMENTS = AuraNote/AuraNote.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				INFOPLIST_FILE = AuraNote/Info.plist;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-				);
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
+				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/Libraries/sherpa-onnx/lib";
+				OTHER_LDFLAGS = "$(inherited) -lsherpa-onnx-c-api";
 				PRODUCT_BUNDLE_IDENTIFIER = com.eastlakestudio.auranote;
 				PRODUCT_NAME = AuraNote;
 				SDKROOT = auto;
@@ -398,6 +448,7 @@
 				SUPPORTS_MACCATALYST = NO;
 				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = YES;
 				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = YES;
+				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/Libraries/sherpa-onnx";
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Release;
@@ -457,7 +508,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 1;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = J4RT98GF7B;
 				ENABLE_NS_ASSERTIONS = NO;
@@ -472,7 +523,7 @@
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 1.1.0;
+				MARKETING_VERSION = 1.0.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -517,7 +568,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 1;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = J4RT98GF7B;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -538,7 +589,7 @@
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 1.1.0;
+				MARKETING_VERSION = 1.0.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -604,14 +655,6 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
-		4B5372E24ABB1B319E7FAD33 /* XCRemoteSwiftPackageReference "FluidAudio" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/FluidInference/FluidAudio.git";
-			requirement = {
-				branch = main;
-				kind = branch;
-			};
-		};
 		93DDE6E584C6928ABB67DEA6 /* XCRemoteSwiftPackageReference "WhisperKit" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/argmaxinc/WhisperKit.git";
@@ -627,11 +670,6 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 93DDE6E584C6928ABB67DEA6 /* XCRemoteSwiftPackageReference "WhisperKit" */;
 			productName = WhisperKit;
-		};
-		E29D2CB566CB0EA007BA0347 /* FluidAudio */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 4B5372E24ABB1B319E7FAD33 /* XCRemoteSwiftPackageReference "FluidAudio" */;
-			productName = FluidAudio;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

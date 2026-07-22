@@ -26,7 +26,8 @@ struct Meeting: Identifiable, Codable, Hashable {
     static func create(
         title: String,
         location: String? = nil,
-        parentMeetingId: String? = nil
+        parentMeetingId: String? = nil,
+        attendees: String? = nil
     ) -> Meeting {
         let now = Date()
         return Meeting(
@@ -40,7 +41,7 @@ struct Meeting: Identifiable, Codable, Hashable {
             summary: nil,
             createdAt: now,
             updatedAt: now,
-            attendees: nil
+            attendees: attendees
         )
     }
 }
@@ -202,6 +203,8 @@ struct AudioChunk: Identifiable, Sendable {
     var text: String?
     var isTranscribing: Bool
     var speakerLabel: String?
+    /// 实时录音阶段提取的声纹向量，供离线分析回退复用
+    var embedding: [Float]?
 
     var formattedTime: String {
         let mins = Int(startTime) / 60

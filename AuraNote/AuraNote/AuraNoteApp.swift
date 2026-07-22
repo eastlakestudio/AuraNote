@@ -21,7 +21,6 @@ struct AuraNoteApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     #endif
     @State private var databaseManager = DatabaseManager()
-    @State private var modelLoadError: String?
 
     var body: some Scene {
         WindowGroup {
@@ -35,16 +34,7 @@ struct AuraNoteApp: App {
                         AppLog.info("Voice model preload completed on startup")
                     } catch {
                         AppLog.error("Voice model preload failed on startup: \(error.localizedDescription)")
-                        modelLoadError = error.localizedDescription
                     }
-                }
-                .alert("语音模型", isPresented: Binding(
-                    get: { modelLoadError != nil },
-                    set: { if !$0 { modelLoadError = nil } }
-                )) {
-                    Button("确定") { modelLoadError = nil }
-                } message: {
-                    Text("模型加载失败，实时转写功能不可用，录音文件可在稍后手动转写。\n\n\(modelLoadError ?? "")")
                 }
         }
         .defaultSize(width: 1440, height: 900)

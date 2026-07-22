@@ -20,7 +20,10 @@ final class SettingsManager {
             NotificationCenter.default.post(name: SettingsManager.settingsDidChangeNotification, object: nil)
         }
     }
-    var modelPath: String = ""
+    /// 模型存储基路径（固定为沙盒 Documents，不可配置）
+    var modelPath: String {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!.path
+    }
     var selectedVoice: String = "openai/whisper-large-v3-turbo"
     
     // MARK: - 音频与算法参数（系统配置栏可调）
@@ -53,20 +56,36 @@ final class SettingsManager {
     var baseGain: Float = 1.5 {
         didSet { defaults.set(baseGain, forKey: "algo_base_gain") }
     }
-    /// 声纹聚类阈值，值越高区分越严格。范围 0.5~0.95
-    var clusteringThreshold: Double = 0.82 {
-        didSet { defaults.set(clusteringThreshold, forKey: "algo_clustering_threshold") }
+    /// 声纹聚类距离阈值（sherpa-onnx FastClustering，余弦距离 0~2）：越低越细分，说话人越多。默认 0.90
+    var clusteringThreshold: Double = 0.90 {
+        didSet { defaults.set(clusteringThreshold, forKey: "sherpa_cluster_dist") }
+    }
+    /// 增量聚类距离阈值（逐段，余弦距离 0~2）：越低越保守，避免异人误合并。同人实测 <0.3，默认 0.30
+    var incrementalClusteringDistance: Float = 0.30 {
+        didSet { defaults.set(incrementalClusteringDistance, forKey: "algo_incremental_cluster_dist") }
+    }
+    /// 聚类级合并距离阈值（簇质心互比，余弦距离 0~2）：平均声纹更稳定，可比逐段阈值更宽松。默认 0.50
+    var clusterMergeDistance: Float = 0.50 {
+        didSet { defaults.set(clusterMergeDistance, forKey: "algo_cluster_merge_dist") }
+    }
+    /// 最短语音段（秒），sherpa-onnx diarization。范围 0.1~2.0
+    var minDurationOn: Float = 0.5 {
+        didSet { defaults.set(minDurationOn, forKey: "sherpa_min_duration_on") }
+    }
+    /// 最短静音间隔（秒），sherpa-onnx diarization。范围 0.1~2.0
+    var minDurationOff: Float = 0.5 {
+        didSet { defaults.set(minDurationOff, forKey: "sherpa_min_duration_off") }
     }
     /// 声纹匹配基础阈值（余弦相似度最低分）。范围 0.3~0.9
-    var matchingThreshold: Float = 0.65 {
+    var matchingThreshold: Float = 0.70 {
         didSet { defaults.set(matchingThreshold, forKey: "algo_matching_threshold") }
     }
     /// 声纹匹配高置信度阈值，高于此值自动绑定。范围 0.5~0.95
-    var highConfidenceThreshold: Float = 0.7 {
+    var highConfidenceThreshold: Float = 0.75 {
         didSet { defaults.set(highConfidenceThreshold, forKey: "algo_high_confidence_threshold") }
     }
     /// 实时录音声纹匹配阈值（与离线共用同一管线，默认同 matchingThreshold）。范围 0.3~0.8
-    var liveMatchingThreshold: Float = 0.65 {
+    var liveMatchingThreshold: Float = 0.70 {
         didSet { defaults.set(liveMatchingThreshold, forKey: "algo_live_matching_threshold") }
     }
     /// 离线转写消费者轮询间隔（秒）。范围 0.1~1.0
@@ -79,29 +98,10 @@ final class SettingsManager {
     }
     
     // MARK: - 数据存储路径
-    
-    /// 录音文件和数据库的存储目录路径。默认使用 App Sandbox 的 Documents 目录
-    var dataPath: String = "" {
-        didSet {
-            defaults.set(dataPath, forKey: "data_storage_path")
-            // 确保目录存在
-            if !dataPath.isEmpty {
-                try? FileManager.default.createDirectory(atPath: dataPath, withIntermediateDirectories: true)
-            }
-        }
-    }
-    
-    /// 数据存储目录 URL（始终返回有效路径，默认回退到 Documents）
+
+    /// 数据存储目录 URL（固定为 App Sandbox Documents，不支持自定义路径）
     var dataDirectory: URL {
-        if !dataPath.isEmpty, FileManager.default.fileExists(atPath: dataPath) {
-            return URL(fileURLWithPath: dataPath)
-        }
-        return FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
-    }
-    
-    /// 默认数据存储路径（App Sandbox Documents）
-    static var defaultDataPath: String {
-        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!.path
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
     }
     
     /// 唯一支持的模型
@@ -154,11 +154,6 @@ final class SettingsManager {
     
     var modelVersion = "" {
         didSet { if !modelVersion.isEmpty { defaults.set(modelVersion, forKey: "current_model_version") } }
-    }
-    
-    var defaultModelPath: String {
-        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
-            .appendingPathComponent("huggingface/models/argmaxinc/whisperkit-coreml").path
     }
     
     var summaryPrompt: String {
@@ -230,32 +225,17 @@ final class SettingsManager {
         targetPeak = d.object(forKey: "algo_target_peak") as? Float ?? 0.7
         maxGain = d.object(forKey: "algo_max_gain") as? Float ?? 10.0
         baseGain = d.object(forKey: "algo_base_gain") as? Float ?? 1.5
-        clusteringThreshold = d.object(forKey: "algo_clustering_threshold") as? Double ?? 0.82
-        matchingThreshold = d.object(forKey: "algo_matching_threshold") as? Float ?? 0.65
-        highConfidenceThreshold = d.object(forKey: "algo_high_confidence_threshold") as? Float ?? 0.7
-        liveMatchingThreshold = d.object(forKey: "algo_live_matching_threshold") as? Float ?? 0.65
+        clusteringThreshold = d.object(forKey: "sherpa_cluster_dist") as? Double ?? 0.90
+        incrementalClusteringDistance = d.object(forKey: "algo_incremental_cluster_dist") as? Float ?? 0.30
+        clusterMergeDistance = d.object(forKey: "algo_cluster_merge_dist") as? Float ?? 0.50
+        minDurationOn = d.object(forKey: "sherpa_min_duration_on") as? Float ?? 0.5
+        minDurationOff = d.object(forKey: "sherpa_min_duration_off") as? Float ?? 0.5
+        matchingThreshold = d.object(forKey: "algo_matching_threshold") as? Float ?? 0.70
+        highConfidenceThreshold = d.object(forKey: "algo_high_confidence_threshold") as? Float ?? 0.75
+        liveMatchingThreshold = d.object(forKey: "algo_live_matching_threshold") as? Float ?? 0.70
+        AppLog.info("[Settings] clusteringThreshold=\(clusteringThreshold) incrClusterDist=\(incrementalClusteringDistance) clusterMergeDist=\(clusterMergeDistance) minOn=\(minDurationOn) minOff=\(minDurationOff) matching=\(matchingThreshold) highConf=\(highConfidenceThreshold) liveMatching=\(liveMatchingThreshold)")
         consumerPollInterval = d.object(forKey: "algo_consumer_poll_interval") as? Double ?? 0.3
         maxChunkDuration = d.object(forKey: "algo_max_chunk_duration") as? Double ?? 8.0
-        dataPath = d.string(forKey: "data_storage_path") ?? ""
-        
-        // 先加载 modelPath，后续文件系统同步需要用到
-        let savedPath = d.string(forKey: "model_path") ?? ""
-        if !savedPath.isEmpty && FileManager.default.fileExists(atPath: savedPath) {
-            modelPath = savedPath
-        } else {
-            // 清除无效的保存路径
-            if !savedPath.isEmpty { d.removeObject(forKey: "model_path") }
-            // 检查默认路径是否有模型
-            let defaultModelID = Self.supportedModelID
-            let defaultModelURL = URL(fileURLWithPath: defaultModelPath).appendingPathComponent(defaultModelID)
-            var isDir: ObjCBool = false
-            if FileManager.default.fileExists(atPath: defaultModelURL.path, isDirectory: &isDir), isDir.boolValue,
-               let contents = try? FileManager.default.contentsOfDirectory(atPath: defaultModelURL.path), !contents.isEmpty {
-                modelPath = defaultModelPath
-            } else {
-                modelPath = ""
-            }
-        }
         
         // 仅在首次启动时加载持久化的下载状态，后续使用内存中已有状态
         if !hasPerformedStartupSync {
@@ -265,7 +245,7 @@ final class SettingsManager {
             }
         }
         // 首次启动时与文件系统同步：以模型目录中的实际文件为准
-        if !hasPerformedStartupSync && !modelPath.isEmpty {
+        if !hasPerformedStartupSync {
             hasPerformedStartupSync = true
             let repoPath = modelPath + "/models/argmaxinc/whisperkit-coreml"
             let variant = Self.supportedModelID
@@ -300,7 +280,6 @@ final class SettingsManager {
         d.set(summaryPrompt, forKey: "summary_prompt")
         
         d.set(langSetting, forKey: "ui_language")
-        d.set(modelPath, forKey: "model_path")
         d.set(selectedVoice, forKey: "voice_model")
         
         // 持久化每模型下载状态

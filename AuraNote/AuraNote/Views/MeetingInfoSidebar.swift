@@ -38,7 +38,18 @@ struct MeetingInfoSidebar: View {
         for person in editedAttendeesList {
             if stats[person] == nil { stats[person] = (0, 0.0) }
         }
-        return stats.map { ($0.key, $0.value.count, $0.value.duration) }.sorted { $0.0 < $1.0 }
+        // 按每个 speaker 首次发言时间升序排列
+        var firstTimes = [String: Double]()
+        for segment in viewModel.transcriptSegments.filter({ $0.isFinal && !$0.speakerLabel.isEmpty }) {
+            let label = segment.speakerLabel
+            firstTimes[label] = min(firstTimes[label] ?? Double.greatestFiniteMagnitude, segment.startTime)
+        }
+        // 仅在参会人列表中但无发言的排到最后
+        for person in editedAttendeesList {
+            if firstTimes[person] == nil { firstTimes[person] = Double.greatestFiniteMagnitude }
+        }
+        return stats.map { ($0.key, $0.value.count, $0.value.duration) }
+            .sorted { (firstTimes[$0.0] ?? Double.greatestFiniteMagnitude) < (firstTimes[$1.0] ?? Double.greatestFiniteMagnitude) }
     }
 
     var body: some View {
