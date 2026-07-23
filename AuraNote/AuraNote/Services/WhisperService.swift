@@ -52,8 +52,12 @@ actor WhisperService {
     
     /// 重置服务，以备重新载入新模型
     func reset() {
+        // 先断开回调闭包防止循环引用，确保 WhisperKit 实例可被完全释放
+        self.pipe?.segmentDiscoveryCallback = nil
         self.pipe = nil
         self.isReady = false
+        self.isLoading = false
+        AppLog.info("[Whisper] Model released from memory")
     }
     
     /// 对保存的录音文件进行高精度离线转写
@@ -111,6 +115,7 @@ actor WhisperService {
         AppLog.info("WhisperKit transcribe() call started")
         AppLog.info("[Whisper DecodingOptions] task=\(options.task) language=\(options.language ?? "auto") temperature=\(options.temperature) tempFallbackCount=\(options.temperatureFallbackCount) tempIncrement=\(options.temperatureIncrementOnFallback) sampleLength=\(options.sampleLength) topK=\(options.topK) usePrefillPrompt=\(options.usePrefillPrompt) usePrefillCache=\(options.usePrefillCache) skipSpecialTokens=\(options.skipSpecialTokens) withoutTimestamps=\(options.withoutTimestamps) wordTimestamps=\(options.wordTimestamps) compressionRatioThreshold=\(options.compressionRatioThreshold.map { String($0) } ?? "nil") logProbThreshold=\(options.logProbThreshold.map { String($0) } ?? "nil") firstTokenLogProbThreshold=\(options.firstTokenLogProbThreshold.map { String($0) } ?? "nil") noSpeechThreshold=\(options.noSpeechThreshold.map { String($0) } ?? "nil") concurrentWorkers=\(options.concurrentWorkerCount) chunkingStrategy=\(options.chunkingStrategy.map { String(describing: $0) } ?? "nil")")
         let results = try await pipe.transcribe(audioPath: audioURL.path, decodeOptions: options)
+        pipe.segmentDiscoveryCallback = nil  // 转录完成，立即释放回调闭包防止内存泄漏
         AppLog.info("WhisperKit transcribe() returned: \(results.first?.segments.count ?? 0) segments")
 
         if let result = results.first {

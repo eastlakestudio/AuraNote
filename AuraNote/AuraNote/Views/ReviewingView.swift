@@ -30,6 +30,9 @@ struct ReviewingView: View {
     @State private var searchIndex = 0
     @FocusState private var isSearchFocused: Bool
 
+    // 本地桥接 ViewModel 的 showSaveNewContactsAlert，确保 sheet 可靠弹出
+    @State private var showSaveSheet = false
+
     private var retryButtonLabel: String {
         if viewModel.isTranscribingOffline { return loc("analyzing") }
         if viewModel.transcriptSegments.isEmpty { return loc("reanalyze") }
@@ -346,18 +349,32 @@ struct ReviewingView: View {
                 queuedSegments = []
                 viewModel.audioPlayer.playbackEndTime = nil
             }
-            .sheet(isPresented: $showDebugLog) {
-                DebugLogView()
+        }
+        .sheet(isPresented: $showDebugLog) {
+            DebugLogView()
+        }
+        .alert(loc("confirm_retranscribe"), isPresented: $showRetryConfirm) {
+            Button(loc("cancel"), role: .cancel) { pendingRetryAction = nil }
+            Button(loc("confirm"), role: .destructive) {
+                pendingRetryAction?()
+                pendingRetryAction = nil
             }
-            .alert(loc("confirm_retranscribe"), isPresented: $showRetryConfirm) {
-                Button(loc("cancel"), role: .cancel) { pendingRetryAction = nil }
-                Button(loc("confirm"), role: .destructive) {
-                    pendingRetryAction?()
-                    pendingRetryAction = nil
-                }
-            } message: {
-                Text(String(format: loc("confirm_retranscribe_msg"), viewModel.transcriptSegments.count))
+        } message: {
+            Text(String(format: loc("confirm_retranscribe_msg"), viewModel.transcriptSegments.count))
+        }
+        .onChange(of: viewModel.showSaveNewContactsAlert) { _, newValue in
+            AppLog.info("[Exit] showSaveNewContactsAlert changed to \(newValue), syncing showSaveSheet")
+            showSaveSheet = newValue
+        }
+        .onChange(of: showSaveSheet) { _, newValue in
+            if !newValue && viewModel.showSaveNewContactsAlert {
+                AppLog.info("[Exit] Sheet dismissed externally, syncing back to ViewModel")
+                viewModel.showSaveNewContactsAlert = false
             }
+        }
+        .sheet(isPresented: $showSaveSheet) {
+            SaveNewContactsSheet(viewModel: viewModel)
+                .onAppear { AppLog.info("[Exit] SaveNewContactsSheet appeared with \(viewModel.pendingNewContactsToPrompt.count) contacts") }
         }
     }
 
@@ -804,4 +821,142 @@ struct ReviewingView: View {
         }
     }
 
+}
+
+// MARK: - 退出会议保存新联系人弹窗
+
+struct SaveNewContactsSheet: View {
+    @Bindable var viewModel: RecordingViewModel
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // 标题栏
+            HStack {
+                Text(loc("save_new_speakers_title"))
+                    .font(.headline)
+                Spacer()
+                Button(loc("save_new_speakers_discard")) {
+                    viewModel.discardNewContacts()
+                    dismiss()
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 20)
+            .padding(.bottom, 8)
+
+            Divider()
+
+            // 说明文字
+            Text(String(format: loc("save_new_speakers_msg"), viewModel.pendingNewContactsToPrompt.count, ""))
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 20)
+                .padding(.top, 12)
+
+            // 全选
+            HStack(spacing: 0) {
+                let allSelected = viewModel.selectedPendingContactIds.count == viewModel.pendingNewContactsToPrompt.count
+                Button {
+                    if allSelected {
+                        viewModel.selectedPendingContactIds = []
+                    } else {
+                        viewModel.selectedPendingContactIds = Set(viewModel.pendingNewContactsToPrompt.map(\.id))
+                    }
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: allSelected ? "checkmark.circle.fill" : "circle")
+                            .foregroundStyle(allSelected ? .purple : .secondary)
+                        Text(loc("select_all"))
+                            .font(.subheadline)
+                    }
+                }
+                .buttonStyle(.plain)
+
+                Spacer()
+
+                Text(String(format: loc("selected_count_fmt"), viewModel.selectedPendingContactIds.count))
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 10)
+            .padding(.bottom, 6)
+
+            Divider()
+                .padding(.horizontal, 20)
+
+            // 联系人列表
+            ScrollView {
+                VStack(spacing: 0) {
+                    ForEach(viewModel.pendingNewContactsToPrompt) { contact in
+                        let isSelected = viewModel.selectedPendingContactIds.contains(contact.id)
+                        Button {
+                            if isSelected {
+                                viewModel.selectedPendingContactIds.remove(contact.id)
+                            } else {
+                                viewModel.selectedPendingContactIds.insert(contact.id)
+                            }
+                        } label: {
+                            HStack(spacing: 10) {
+                                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                                    .foregroundStyle(isSelected ? .purple : .secondary)
+                                Circle()
+                                    .fill(personColor(contact.name))
+                                    .frame(width: 28, height: 28)
+                                    .overlay(Text(String(contact.name.prefix(1))).font(.caption2).foregroundStyle(.white))
+                                Text(contact.name)
+                                    .font(.subheadline)
+                                Spacer()
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 7)
+
+                        if contact.id != viewModel.pendingNewContactsToPrompt.last?.id {
+                            Divider()
+                                .padding(.leading, 58)
+                        }
+                    }
+                }
+            }
+
+            Divider()
+
+            // 底部按钮
+            HStack {
+                Button(loc("save_new_speakers_discard")) {
+                    viewModel.discardNewContacts()
+                    dismiss()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+
+                Spacer()
+
+                Button(loc("save_new_speakers_save_selected")) {
+                    viewModel.confirmSaveNewContacts()
+                    dismiss()
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.purple)
+                .controlSize(.large)
+                .disabled(viewModel.selectedPendingContactIds.isEmpty)
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 16)
+        }
+        .frame(width: 400, height: 480)
+    }
+
+    private func personColor(_ name: String) -> Color {
+        let colors: [Color] = [.blue, .green, .orange, .pink, .teal, .indigo, .cyan, .mint]
+        let hash = abs(name.hashValue)
+        return colors[hash % colors.count]
+    }
 }

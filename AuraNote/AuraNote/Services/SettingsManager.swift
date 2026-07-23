@@ -77,15 +77,15 @@ final class SettingsManager {
         didSet { defaults.set(minDurationOff, forKey: "sherpa_min_duration_off") }
     }
     /// 声纹匹配基础阈值（余弦相似度最低分）。范围 0.3~0.9
-    var matchingThreshold: Float = 0.70 {
+    var matchingThreshold: Float = 0.55 {
         didSet { defaults.set(matchingThreshold, forKey: "algo_matching_threshold") }
     }
     /// 声纹匹配高置信度阈值，高于此值自动绑定。范围 0.5~0.95
-    var highConfidenceThreshold: Float = 0.55 {
+    var highConfidenceThreshold: Float = 0.65 {
         didSet { defaults.set(highConfidenceThreshold, forKey: "algo_high_confidence_threshold") }
     }
     /// 实时录音声纹匹配阈值（与离线共用同一管线，默认同 matchingThreshold）。范围 0.3~0.8
-    var liveMatchingThreshold: Float = 0.70 {
+    var liveMatchingThreshold: Float = 0.55 {
         didSet { defaults.set(liveMatchingThreshold, forKey: "algo_live_matching_threshold") }
     }
     /// 离线转写消费者轮询间隔（秒）。范围 0.1~1.0
@@ -227,14 +227,16 @@ final class SettingsManager {
         baseGain = d.object(forKey: "algo_base_gain") as? Float ?? 1.5
         clusteringThreshold = d.object(forKey: "sherpa_cluster_dist") as? Double ?? 0.90
         let savedIncr = d.object(forKey: "algo_incremental_cluster_dist") as? Float
-        incrementalClusteringDistance = (savedIncr == 0.36 || savedIncr == nil) ? 0.28 : savedIncr!
+        incrementalClusteringDistance = (savedIncr == 0.36 || savedIncr == 0.28 || savedIncr == nil) ? 0.45 : savedIncr!
         let savedMerge = d.object(forKey: "algo_cluster_merge_dist") as? Float
-        clusterMergeDistance = (savedMerge == 0.38 || savedMerge == 0.50 || savedMerge == nil) ? 0.30 : savedMerge!
+        clusterMergeDistance = (savedMerge == 0.38 || savedMerge == 0.50 || savedMerge == 0.30 || savedMerge == nil) ? 0.50 : savedMerge!
         minDurationOn = d.object(forKey: "sherpa_min_duration_on") as? Float ?? 0.5
         minDurationOff = d.object(forKey: "sherpa_min_duration_off") as? Float ?? 0.5
-        matchingThreshold = d.object(forKey: "algo_matching_threshold") as? Float ?? 0.70
-        highConfidenceThreshold = d.object(forKey: "algo_high_confidence_threshold") as? Float ?? 0.75
-        liveMatchingThreshold = d.object(forKey: "algo_live_matching_threshold") as? Float ?? 0.70
+        let savedMatching = d.object(forKey: "algo_matching_threshold") as? Float
+        matchingThreshold = (savedMatching == 0.70 || savedMatching == nil) ? 0.55 : savedMatching!
+        let savedHighConf = d.object(forKey: "algo_high_confidence_threshold") as? Float
+        highConfidenceThreshold = (savedHighConf == 0.75 || savedHighConf == 0.55 || savedHighConf == nil) ? 0.65 : savedHighConf!
+        liveMatchingThreshold = d.object(forKey: "algo_live_matching_threshold") as? Float ?? 0.55
         AppLog.info("[Settings] clusteringThreshold=\(clusteringThreshold) incrClusterDist=\(incrementalClusteringDistance) clusterMergeDist=\(clusterMergeDistance) minOn=\(minDurationOn) minOff=\(minDurationOff) matching=\(matchingThreshold) highConf=\(highConfidenceThreshold) liveMatching=\(liveMatchingThreshold)")
         consumerPollInterval = d.object(forKey: "algo_consumer_poll_interval") as? Double ?? 0.3
         maxChunkDuration = d.object(forKey: "algo_max_chunk_duration") as? Double ?? 8.0

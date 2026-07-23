@@ -718,6 +718,14 @@ struct PersonnelManagementView: View {
     private func reassignClip(_ clip: SpeechClip, to contact: Contact) {
         do {
             try db.updateSpeechClipContact(clipId: clip.id, speakerLabel: contact.name, contactId: contact.id)
+            // 将原发言人的声纹合并到目标联系人，持续优化声纹档案
+            let clipDuration = Float(max(0, clip.endTime - clip.startTime))
+            try? db.mergeSpeakerEmbeddingToContact(
+                meetingId: clip.meetingId,
+                speakerLabel: clip.speakerLabel,
+                contactId: contact.id,
+                duration: clipDuration
+            )
             refreshClips()
         } catch {
             AppLog.warn("reassignClip failed clip=\(clip.id): \(error.localizedDescription)")
@@ -732,12 +740,16 @@ struct PersonnelManagementView: View {
     }
 
     private func formatTime(_ t: Double) -> String {
-        let m = Int(t)/60, s = Int(t)%60
+        let total = max(0, Int(t.rounded()))
+        let h = total / 3600, m = (total % 3600) / 60, s = total % 60
+        if h > 0 {
+            return String(format: "%d:%02d:%02d", h, m, s)
+        }
         return String(format: "%02d:%02d", m, s)
     }
 
     private func formatDate(_ date: Date) -> String {
-        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"
+        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd HH:mm"
         return f.string(from: date)
     }
 

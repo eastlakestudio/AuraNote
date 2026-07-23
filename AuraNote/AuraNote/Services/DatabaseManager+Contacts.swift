@@ -59,6 +59,92 @@ extension DatabaseManager {
             throw DBError.executeFailed(lastError)
         }
     }
+
+    /// 有条件覆盖声纹向量：本次发言时长 ≥ 20 秒则覆盖，否则保留已有声纹
+    /// - Parameters:
+    ///   - contactId: 目标联系人 ID
+    ///   - newEmbedding: 本次新提取的声纹向量
+    ///   - newDuration: 新样本对应的发言时长（秒），作为覆盖条件判定
+    func mergeContactEmbedding(contactId: String, newEmbedding: [Float], newDuration: Float) throws {
+        guard let existing = fetchContactEmbedding(contactId: contactId),
+              existing.count == newEmbedding.count else {
+            // 联系人无声纹存档，或维度不一致 → 直接保存新向量，记录初始时长
+            try saveContactEmbedding(contactId: contactId, embedding: newEmbedding)
+            try updateContactEmbeddingDuration(contactId: contactId, duration: newDuration)
+            AppLog.info("mergeContactEmbedding: first save, duration=\(String(format: "%.1f", newDuration))s")
+            return
+        }
+        // 有条件覆盖：本次发言 ≥ 20 秒才覆盖旧声纹，否则保留已有（短样本不稳定）
+        let minDuration: Float = 20.0
+        if newDuration >= minDuration {
+            try saveContactEmbedding(contactId: contactId, embedding: newEmbedding)
+            try updateContactEmbeddingDuration(contactId: contactId, duration: newDuration)
+            AppLog.info("mergeContactEmbedding: overwrite, newDuration=\(String(format: "%.1f", newDuration))s >= \(String(format: "%.0f", minDuration))s")
+        } else {
+            AppLog.info("mergeContactEmbedding: skipped, newDuration=\(String(format: "%.1f", newDuration))s < \(String(format: "%.0f", minDuration))s, keeping existing")
+        }
+    }
+
+    /// 读取联系人的累计声纹采样时长
+    func fetchContactEmbeddingDuration(contactId: String) -> Float {
+        let sql = "SELECT voice_embedding_duration FROM contacts WHERE id = ?"
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return 0 }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, contactId.cString, -1, SQLITE_TRANSIENT)
+        if sqlite3_step(stmt) == SQLITE_ROW {
+            return Float(sqlite3_column_double(stmt, 0))
+        }
+        return 0
+    }
+
+    /// 更新联系人的累计声纹采样时长
+    private func updateContactEmbeddingDuration(contactId: String, duration: Float) throws {
+        let sql = "UPDATE contacts SET voice_embedding_duration = ? WHERE id = ?"
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            throw DBError.prepareFailed(lastError)
+        }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_double(stmt, 1, Double(duration))
+        sqlite3_bind_text(stmt, 2, contactId.cString, -1, SQLITE_TRANSIENT)
+        guard sqlite3_step(stmt) == SQLITE_DONE else {
+            throw DBError.executeFailed(lastError)
+        }
+    }
+
+    /// 将某场会议中指定发言人的声纹合并到目标联系人
+    /// - Parameters:
+    ///   - meetingId: 会议 ID（用于查找该会议的声纹存档）
+    ///   - speakerLabel: 源发言人标签（如 Speaker_S0）
+    ///   - contactId: 目标联系人 ID
+    ///   - duration: 新样本的发言时长（秒），用于时长加权
+    func mergeSpeakerEmbeddingToContact(meetingId: String, speakerLabel: String, contactId: String, duration: Float = 0) throws {
+        let embeddings = fetchMeetingEmbeddings(meetingId: meetingId)
+        guard let emb = embeddings[speakerLabel] else {
+            AppLog.info("mergeSpeakerEmbeddingToContact: no embedding for \(speakerLabel) in meeting \(meetingId)")
+            return
+        }
+        try mergeContactEmbedding(contactId: contactId, newEmbedding: emb, newDuration: duration)
+        AppLog.info("mergeSpeakerEmbeddingToContact: \(speakerLabel) -> \(contactId) from meeting \(meetingId), duration=\(String(format: "%.1f", duration))s")
+    }
+
+    /// 读取单个联系人的声纹向量
+    func fetchContactEmbedding(contactId: String) -> [Float]? {
+        let sql = "SELECT voice_embedding FROM contacts WHERE id = ? AND voice_embedding IS NOT NULL"
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, contactId.cString, -1, SQLITE_TRANSIENT)
+        if sqlite3_step(stmt) == SQLITE_ROW {
+            if let blob = sqlite3_column_blob(stmt, 0) {
+                let count = Int(sqlite3_column_bytes(stmt, 0))
+                let data = Data(bytes: blob, count: count)
+                return data.withUnsafeBytes { Array($0.bindMemory(to: Float.self)) }
+            }
+        }
+        return nil
+    }
     
     /// 清除单个联系人的声纹特征
     func clearContactEmbedding(contactId: String) throws {
@@ -254,6 +340,9 @@ extension DatabaseManager {
                     let data = Data(bytes: blob, count: count)
                     if let embs = try? JSONDecoder().decode([String: [Float]].self, from: data) {
                         for (spkKey, emb) in embs where !emb.isEmpty {
+                            // 跳过 Speaker_ 前缀的历史临时标签（来自往期未命名说话人），
+                            // 否则会导致本期相同 Speaker_ 被错误匹配，无法识别为新参会人
+                            guard !spkKey.hasPrefix("Speaker_") else { continue }
                             let profileId = "\(meetingId)_\(spkKey)"
                             if !existingIds.contains(spkKey) && !existingIds.contains(profileId) {
                                 profiles.append(VoiceprintProfile(

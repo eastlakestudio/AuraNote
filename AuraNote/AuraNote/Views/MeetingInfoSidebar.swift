@@ -9,8 +9,6 @@ struct MeetingInfoSidebar: View {
     @State private var editedLocation = ""
     @State private var editedCreatedAt = Date()
     @State private var editedEndedAt = Date()
-    @State private var showDatePickerPopover = false
-    @State private var showEndDatePickerPopover = false
     @Binding var filterSpeaker: String?
     @Binding var attendeesString: String
     @State private var renamePerson = ""
@@ -105,34 +103,18 @@ struct MeetingInfoSidebar: View {
     private var startTimeField: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(loc("start_time")).font(.caption).foregroundStyle(.secondary)
-            Button { showDatePickerPopover = true } label: {
-                HStack {
-                    Image(systemName: "calendar").foregroundStyle(.purple)
-                    Text(formatDate(editedCreatedAt)).font(.subheadline); Spacer()
-                }.padding(8).background(.quaternary.opacity(0.4)).clipShape(RoundedRectangle(cornerRadius: 6))
-            }.buttonStyle(.plain)
-            .popover(isPresented: $showDatePickerPopover) {
-                DatePicker("", selection: $editedCreatedAt, displayedComponents: [.date, .hourAndMinute])
-                    .datePickerStyle(.graphical).labelsHidden().padding().frame(width: 280, height: 320)
-                    .onChange(of: editedCreatedAt) { _, _ in saveMetadata() }
-            }
+            DatePicker("", selection: $editedCreatedAt, displayedComponents: [.date, .hourAndMinute])
+                .labelsHidden()
+                .onChange(of: editedCreatedAt) { _, _ in saveMetadata() }
         }
     }
 
     private var endTimeField: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(loc("end_time")).font(.caption).foregroundStyle(.secondary)
-            Button { showEndDatePickerPopover = true } label: {
-                HStack {
-                    Image(systemName: "calendar").foregroundStyle(.purple)
-                    Text(formatDate(editedEndedAt)).font(.subheadline); Spacer()
-                }.padding(8).background(.quaternary.opacity(0.4)).clipShape(RoundedRectangle(cornerRadius: 6))
-            }.buttonStyle(.plain)
-            .popover(isPresented: $showEndDatePickerPopover) {
-                DatePicker("", selection: $editedEndedAt, displayedComponents: [.date, .hourAndMinute])
-                    .datePickerStyle(.graphical).labelsHidden().padding().frame(width: 280, height: 320)
-                    .onChange(of: editedEndedAt) { _, _ in saveMetadata() }
-            }
+            DatePicker("", selection: $editedEndedAt, displayedComponents: [.date, .hourAndMinute])
+                .labelsHidden()
+                .onChange(of: editedEndedAt) { _, _ in saveMetadata() }
         }
     }
 
@@ -273,7 +255,7 @@ struct MeetingInfoSidebar: View {
                                     .fontWeight(filterSpeaker == item.speaker ? .bold : .regular)
                                     .foregroundStyle(filterSpeaker == item.speaker ? .purple : .primary)
                                 Spacer()
-                                Text("\(String(format: loc("sentences_count_fmt"), item.count)) | \(String(format: "%.1f", item.duration))s")
+                                Text("\(String(format: loc("sentences_count_fmt"), item.count)) | \(formatDuration(item.duration))")
                                     .font(.caption).monospacedDigit().foregroundStyle(.secondary)
                             }
                             .padding(.horizontal, 6).padding(.vertical, 4)
@@ -352,8 +334,14 @@ struct MeetingInfoSidebar: View {
         saveMetadata(updatedAttendees: list.joined(separator: " "))
     }
 
-    private func formatDate(_ date: Date) -> String {
-        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd HH:mm"; return f.string(from: date)
+    /// 将秒数格式化为 H:MM:SS 或 MM:SS
+    private func formatDuration(_ seconds: Double) -> String {
+        let total = max(0, Int(seconds.rounded()))
+        let h = total / 3600, m = (total % 3600) / 60, s = total % 60
+        if h > 0 {
+            return String(format: "%d:%02d:%02d", h, m, s)
+        }
+        return String(format: "%d:%02d", m, s)
     }
 }
 

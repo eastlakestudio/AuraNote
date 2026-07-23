@@ -100,6 +100,16 @@ actor DiarizationService {
         return ex
     }
 
+    /// 释放所有 ONNX Runtime 会话，释放 ~500MB-1GB 内存
+    func reset() {
+        diarizer?.destroy()
+        diarizer = nil
+        cachedThreshold = nil
+        embeddingExtractor?.destroy()
+        embeddingExtractor = nil
+        AppLog.info("[DiarService] ONNX diarizers destroyed, memory released")
+    }
+
     // MARK: - Audio Loading
 
     func loadAudioSamples(_ url: URL) async throws -> [Float] {
@@ -187,82 +197,256 @@ actor DiarizationService {
     }
 
     /// 离线高精声纹分离（sherpa-onnx 内置 Pyannote 3.0 切片 + 0.90 FastClustering HAC 聚类）
-    func diarizeWithEmbeddings(samples: [Float], audioURL: URL? = nil, onProgress: ((Float) -> Void)? = nil) async throws -> DiarizationOutput {
+    func diarizeWithEmbeddings(
+        samples: [Float],
+        audioURL: URL? = nil,
+        onProgress: ((Float) -> Void)? = nil,
+        onIncrementalResult: (([DiarizedSegment], [String: [Float]]) async -> Void)? = nil
+    ) async throws -> DiarizationOutput {
         let startTime = Date()
         let name = audioURL?.lastPathComponent ?? "in-memory-buffer"
-        AppLog.info("[DiarService] sherpa-onnx (pyannote 3.0 + HAC 0.90) diarization start: audio=\(name)")
+        AppLog.info("[DiarService] Hybrid diarization start: audio=\(name)")
 
-        let d = try getDiarizer()
         let audioDuration = Double(samples.count) / 16000.0
         AppLog.info("[DiarService] audio loaded: \(samples.count) samples @ 16kHz, duration=\(String(format: "%.1f", audioDuration))s")
 
-        var lastLoggedProgress: Float = 0
-        let result = try d.process(samples: samples) { progress in
-            onProgress?(progress)
-            // 每 10% 打一次进度日志
-            let pct = Int(progress * 100)
-            let lastPct = Int(lastLoggedProgress * 100)
-            if pct - lastPct >= 10 || progress >= 1.0 {
-                lastLoggedProgress = progress
-                let elapsed = Date().timeIntervalSince(startTime)
-                AppLog.info("[DiarService] diarization progress: \(pct)% (elapsed: \(String(format: "%.1f", elapsed))s)")
+        // 1. 能量 VAD 粗筛
+        let vadSegments = energyVADSegments(samples: samples)
+        AppLog.info("[DiarService] Energy VAD detected \(vadSegments.count) chunks")
+
+        let clustering = IncrementalSpeakerClustering()
+        var labeledSubSegments: [(start: Double, end: Double, label: String, embedding: [Float])] = []
+        var processedDuration: Double = 0
+        var lastMergeDuration: Double = 0
+        var lastCallbackTime = Date.distantPast
+        
+        // 增量维护：避免每 chunk 全量重建 O(n²) 退化
+        var accumulatedSegments: [DiarizedSegment] = []
+        var speakerEmbeddingSums: [String: [Float]] = [:]
+        var speakerEmbeddingCounts: [String: Int] = [:]
+        var lastSegmentIndex: [String: Int] = [:]   // speaker → accumulatedSegments 尾段索引
+        var lastLabeledIndex: Int = 0                // labeledSubSegments 已增量处理到的位置
+        
+        // 预创建 Neural VAD diarizer 并复用（创建 CoreML diarizer 耗时 2-3s，循环外创建一次即可）
+        var hybridDiarizer = SherpaOnnxDiarizer()
+        var hybridConfig = SherpaDiarizationConfig()
+        hybridConfig.segmentationModel = segmentationModelPath()
+        hybridConfig.embeddingModel = embeddingModelPath()
+        hybridConfig.clustering.numClusters = -1
+        hybridConfig.clustering.threshold = 0.1
+        hybridConfig.minDurationOn = 0.5
+        hybridConfig.minDurationOff = 0.5
+        try hybridDiarizer.create(config: hybridConfig)
+        
+        for (idx, vadSeg) in vadSegments.enumerated() {
+            // 支持外部取消（用户退出会议时及时释放资源）
+            try Task.checkCancellation()
+            
+            let startSample = Int(vadSeg.start * 16000)
+            let endSample = min(Int(vadSeg.end * 16000), samples.count)
+            guard startSample < endSample else { continue }
+            
+            var chunkSamples = Array(samples[startSample..<endSample])
+            
+            // 2. Neural VAD 精细切割与 ERes2Net 声纹提取
+            let hybridSegs = await extractHybridSegments(from: chunkSamples, diarizer: hybridDiarizer)
+            chunkSamples.removeAll()  // 立即释放 chunk 拷贝
+            
+            for sub in hybridSegs {
+                let duration = sub.end - sub.start
+                let label = await clustering.addEmbedding(sub.embedding, duration: duration)
+                
+                // 将相对 chunk 的时间轴转换为全局时间轴
+                labeledSubSegments.append((
+                    start: vadSeg.start + sub.start,
+                    end: vadSeg.start + sub.end,
+                    label: label,
+                    embedding: sub.embedding
+                ))
             }
-        }
-
-        // Convert to DiarizedSegment
-        let segments: [DiarizedSegment] = result.segments.map { seg in
-            DiarizedSegment(
-                speakerId: "Speaker_\(seg.speaker)",
-                startTime: Double(seg.start),
-                endTime: Double(seg.end)
-            )
-        }
-
-        let uniqueSpeakers = Set(segments.map(\.speakerId)).sorted()
-        let processElapsed = Date().timeIntervalSince(startTime)
-        AppLog.info("[DiarService] result: \(uniqueSpeakers.count) speakers, \(segments.count) segments (elapsed: \(String(format: "%.1f", processElapsed))s)")
-        for spk in uniqueSpeakers {
-            let count = segments.filter { $0.speakerId == spk }.count
-            let dur = segments.filter { $0.speakerId == spk }.reduce(0.0) { $0 + ($1.endTime - $1.startTime) }
-            AppLog.info("[DiarService]   \(spk): \(count) segments, \(String(format: "%.1f", dur))s total")
-        }
-
-        // Extract embeddings for each speaker (for offline matching)
-        // 只取每个说话人的代表性片段（最多 30 秒），避免拼接全部音频
-        var rawEmbeddings: [String: [Float]] = [:]
-        if !uniqueSpeakers.isEmpty {
-            let ex = try? getEmbeddingExtractor()
-            if let ex = ex {
-                let maxSamplesPerSpeaker = 30 * 16000  // 最多 30 秒
-                for speakerId in uniqueSpeakers {
-                    var speakerSamples: [Float] = []
-                    speakerSamples.reserveCapacity(maxSamplesPerSpeaker)
-                    for seg in segments where seg.speakerId == speakerId {
-                        if speakerSamples.count >= maxSamplesPerSpeaker { break }
-                        let startIdx = Int(seg.startTime * 16000)
-                        let endIdx = min(Int(seg.endTime * 16000), samples.count)
-                        guard startIdx < endIdx else { continue }
-                        let remaining = maxSamplesPerSpeaker - speakerSamples.count
-                        let take = min(endIdx - startIdx, remaining)
-                        speakerSamples.append(contentsOf: samples[startIdx..<(startIdx + take)])
-                    }
-                    if !speakerSamples.isEmpty {
-                        do {
-                            let emb = try ex.extractEmbedding(samples: speakerSamples)
-                            rawEmbeddings[speakerId] = emb
-                        } catch {
-                            AppLog.warn("[DiarService] embedding extraction failed for \(speakerId): \(error)")
+            
+            processedDuration += (vadSeg.end - vadSeg.start)
+            
+            // 每处理 30 秒进行一次全局合并消除局部冗余
+            if processedDuration - lastMergeDuration >= 30.0 {
+                let partialRemap = await clustering.mergeSimilarClusters()
+                if !partialRemap.isEmpty {
+                    for i in 0..<labeledSubSegments.count {
+                        if let newLabel = partialRemap[labeledSubSegments[i].label] {
+                            labeledSubSegments[i].label = newLabel
                         }
                     }
+                    // 聚类合并后标签已变，全量重建增量状态（每 ~30s 一次，可接受）
+                    let rebuilt = buildDiarizationOutput(from: labeledSubSegments, remap: nil)
+                    accumulatedSegments = rebuilt.segments
+                    speakerEmbeddingSums.removeAll()
+                    speakerEmbeddingCounts.removeAll()
+                    lastSegmentIndex.removeAll()
+                    for seg in labeledSubSegments {
+                        if speakerEmbeddingSums[seg.label] == nil {
+                            speakerEmbeddingSums[seg.label] = seg.embedding
+                            speakerEmbeddingCounts[seg.label] = 1
+                        } else {
+                            let dim = seg.embedding.count
+                            for j in 0..<dim {
+                                speakerEmbeddingSums[seg.label]![j] += seg.embedding[j]
+                            }
+                            speakerEmbeddingCounts[seg.label]! += 1
+                        }
+                    }
+                    for (i, seg) in accumulatedSegments.enumerated() {
+                        lastSegmentIndex[seg.speakerId] = i
+                    }
+                    lastLabeledIndex = labeledSubSegments.count
                 }
-                AppLog.info("[DiarService] voiceprint extraction complete: \(rawEmbeddings.count) speakers, dim=\(ex.dimension)")
+                lastMergeDuration = processedDuration
+            }
+            
+            onProgress?(Float(processedDuration / audioDuration))
+            
+            // 抛出增量结果：仅处理本轮新增段，O(新增) 而非 O(全量)
+            if let onIncrementalResult = onIncrementalResult {
+                let now = Date()
+                if now.timeIntervalSince(lastCallbackTime) >= 3.0 || processedDuration < 60.0 {
+                    // 增量合并本轮新增的 sub-segment
+                    let newSubSegs = labeledSubSegments[lastLabeledIndex...]
+                    for seg in newSubSegs {
+                        // 更新声纹累加和
+                        if speakerEmbeddingSums[seg.label] == nil {
+                            speakerEmbeddingSums[seg.label] = seg.embedding
+                            speakerEmbeddingCounts[seg.label] = 1
+                        } else {
+                            let dim = seg.embedding.count
+                            for j in 0..<dim {
+                                speakerEmbeddingSums[seg.label]![j] += seg.embedding[j]
+                            }
+                            speakerEmbeddingCounts[seg.label]! += 1
+                        }
+                        // 仅与同一说话人的最后一个段合并（O(1)，不扫全量）
+                        if let lastIdx = lastSegmentIndex[seg.label],
+                           lastIdx < accumulatedSegments.count {
+                            let lastSeg = accumulatedSegments[lastIdx]
+                            if seg.start <= lastSeg.endTime + 0.1 {
+                                accumulatedSegments[lastIdx] = DiarizedSegment(
+                                    speakerId: seg.label,
+                                    startTime: lastSeg.startTime,
+                                    endTime: max(lastSeg.endTime, seg.end)
+                                )
+                                continue
+                            }
+                        }
+                        // 无法合并，追加新段
+                        accumulatedSegments.append(DiarizedSegment(
+                            speakerId: seg.label,
+                            startTime: seg.start,
+                            endTime: seg.end
+                        ))
+                        lastSegmentIndex[seg.label] = accumulatedSegments.count - 1
+                    }
+                    lastLabeledIndex = labeledSubSegments.count
+                    
+                    // 计算各说话人平均声纹
+                    var avgEmbeddings: [String: [Float]] = [:]
+                    for (speaker, sum) in speakerEmbeddingSums {
+                        guard let count = speakerEmbeddingCounts[speaker], count > 0 else { continue }
+                        let dim = sum.count
+                        var avg = [Float](repeating: 0, count: dim)
+                        for j in 0..<dim { avg[j] = sum[j] / Float(count) }
+                        avgEmbeddings[speaker] = avg
+                    }
+                    
+                    await onIncrementalResult(accumulatedSegments, avgEmbeddings)
+                    lastCallbackTime = now
+                }
+            }
+            
+            AppLog.info("[DiarService] Processed chunk \(idx + 1)/\(vadSegments.count)")
+        }
+        
+        // 3. 最终全局二次合并与重叠去重
+        let remap = await clustering.mergeSimilarClusters()
+        let finalOutput = buildDiarizationOutput(from: labeledSubSegments, remap: remap)
+        
+        let outputSegments = finalOutput.segments
+        let rawEmbeddings = finalOutput.embeddings
+        
+        // 最终合并后最后一次回调，确保外部拿到完整的最终结果
+        if let onIncrementalResult = onIncrementalResult {
+            await onIncrementalResult(outputSegments, rawEmbeddings)
+        }
+        
+        onProgress?(1.0)
+        let processElapsed = Date().timeIntervalSince(startTime)
+        let uniqueSpeakers = Set(outputSegments.map(\.speakerId))
+        AppLog.info("[DiarService] Hybrid result: \(uniqueSpeakers.count) speakers, \(outputSegments.count) segments (elapsed: \(String(format: "%.1f", processElapsed))s)")
+        
+        // 释放 hybridDiarizer（ONNX 会话），避免分析结束后 arena 内存残留
+        hybridDiarizer.destroy()
+        labeledSubSegments.removeAll()
+        
+        return DiarizationOutput(segments: outputSegments, embeddings: rawEmbeddings)
+    }
+
+    private func buildDiarizationOutput(
+        from labeledSubSegments: [(start: Double, end: Double, label: String, embedding: [Float])],
+        remap: [String: String]? = nil
+    ) -> DiarizationOutput {
+        var segments = labeledSubSegments
+        if let remap = remap, !remap.isEmpty {
+            for i in 0..<segments.count {
+                if let newLabel = remap[segments[i].label] {
+                    segments[i].label = newLabel
+                }
             }
         }
-
-        return DiarizationOutput(
-            segments: segments,
-            embeddings: rawEmbeddings
-        )
+        
+        var mergedFinalSegments: [(start: Double, end: Double, label: String, embedding: [Float])] = []
+        let groupedByLabel = Dictionary(grouping: segments, by: { $0.label })
+        
+        for (label, group) in groupedByLabel {
+            let sorted = group.sorted { $0.start < $1.start }
+            var currentMerged: [(start: Double, end: Double, label: String, embedding: [Float])] = []
+            
+            for seg in sorted {
+                if let last = currentMerged.last, seg.start <= last.end + 0.1 {
+                    currentMerged[currentMerged.count - 1] = (
+                        start: last.start,
+                        end: max(last.end, seg.end),
+                        label: label,
+                        embedding: seg.embedding
+                    )
+                } else {
+                    currentMerged.append(seg)
+                }
+            }
+            mergedFinalSegments.append(contentsOf: currentMerged)
+        }
+        
+        mergedFinalSegments.sort { $0.start < $1.start }
+        
+        var outputSegments: [DiarizedSegment] = []
+        for seg in mergedFinalSegments {
+            outputSegments.append(DiarizedSegment(
+                speakerId: seg.label,
+                startTime: seg.start,
+                endTime: seg.end
+            ))
+        }
+        
+        var rawEmbeddings: [String: [Float]] = [:]
+        for (label, group) in Dictionary(grouping: mergedFinalSegments, by: { $0.label }) {
+            let allEmbs = group.map { $0.embedding }
+            guard !allEmbs.isEmpty else { continue }
+            let dim = allEmbs[0].count
+            var avg = [Float](repeating: 0, count: dim)
+            for emb in allEmbs {
+                for j in 0..<dim { avg[j] += emb[j] }
+            }
+            for j in 0..<dim { avg[j] /= Float(allEmbs.count) }
+            rawEmbeddings[label] = avg
+        }
+        
+        return DiarizationOutput(segments: outputSegments, embeddings: rawEmbeddings)
     }
 
     /// 离线语音间隙分段 + 增量聚类（三阶段流水线，与实时录音共用同一聚类算法）
@@ -805,6 +989,9 @@ actor DiarizationService {
             rawEmbeddings[speaker] = avg
         }
 
+        // 最终合并后回调，确保外部拿到完整的最终结果
+        await onIncrementalResult(outputSegments, rawEmbeddings)
+
         return DiarizationOutput(segments: outputSegments, embeddings: rawEmbeddings)
     }
 
@@ -842,7 +1029,7 @@ actor DiarizationService {
     /// [Hybrid Diarization 专用]
     /// 针对一整段连续音频（通常为外层能量 VAD 切割出的大段），内部使用极端严格的 Neural VAD (threshold=0.1) 提取纯净子片段。
     /// 针对每一个子片段 (>0.3s) 独立提取 eres2net 高精声纹。
-    func extractHybridSegments(from samples: [Float]) async -> [(start: Double, end: Double, embedding: [Float])] {
+    func extractHybridSegments(from samples: [Float], diarizer: SherpaOnnxDiarizer? = nil) async -> [(start: Double, end: Double, embedding: [Float])] {
         let segPath = segmentationModelPath()
         let embPath = embeddingModelPath()
         
@@ -861,13 +1048,20 @@ actor DiarizationService {
             config.minDurationOn = 0.5
             config.minDurationOff = 0.5
             
-            let tempDiarizer = SherpaOnnxDiarizer()
-            try tempDiarizer.create(config: config)
+            let effectiveDiarizer: SherpaOnnxDiarizer
+            if let diarizer = diarizer {
+                effectiveDiarizer = diarizer
+            } else {
+                let tempDiarizer = SherpaOnnxDiarizer()
+                try tempDiarizer.create(config: config)
+                effectiveDiarizer = tempDiarizer
+            }
             
             // 提取 Neural VAD 片段
-            let processResult = try tempDiarizer.process(samples: samples)
+            let processResult = try effectiveDiarizer.process(samples: samples)
             let segments = processResult.segments
             
+            // 复用 actor 级缓存的声纹提取器（单会话，避免重复创建 ONNX 会话导致内存泄漏）
             let ex = try getEmbeddingExtractor()
             
             var result: [(start: Double, end: Double, embedding: [Float])] = []

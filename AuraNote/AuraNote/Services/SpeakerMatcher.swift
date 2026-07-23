@@ -54,11 +54,8 @@ enum SpeakerMatcher {
 
         for (speakerId, newEmb) in embeddings {
             for profile in profiles {
-                // 跳过临时发言人特征档案，防止自我匹配（Speaker_X vs Speaker_X 得分 1.0）
-                let isTempProfile = profile.name.hasPrefix("Speaker_") || profile.name.contains("_Speaker_") || profile.id.contains("Speaker_")
-                if isTempProfile || speakerId == profile.name {
-                    continue
-                }
+                // 防止同一档案被重复匹配（同一 contact 可能同时出现在 contact 和 priorSession 中，已在 fetchAllKnownVoiceprintProfiles 中 dedup）
+                // 不跳过 Speaker_ 前缀的 priorSession 档案，它们承载跨会议声纹匹配的关键信息
 
                 let score = DiarizationService.cosineSimilarity(newEmb, profile.embedding)
                 if score >= threshold {

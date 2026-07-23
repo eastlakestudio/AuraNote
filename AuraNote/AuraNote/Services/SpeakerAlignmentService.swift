@@ -54,6 +54,37 @@ enum SpeakerAlignmentService {
             }
         }
 
+        // 兜底：对仍未匹配的 "?" 段，用时间最近邻声纹段赋值
+        // 解决首句因与声纹段边界偏差（<0.15s 重叠）而漏标的问题
+        results = fallbackNearestNeighbor(transcripts: results, diarization: diarization)
+
+        return results
+    }
+
+    /// 最近邻兜底对齐：对 speakerLabel 为 "?" 的段，分配到时间上最近的声纹段
+    private static func fallbackNearestNeighbor(
+        transcripts: [TranscriptSegment],
+        diarization: [DiarizedSegment]
+    ) -> [TranscriptSegment] {
+        var results = transcripts
+        for i in 0..<results.count where results[i].speakerLabel == "?" {
+            let seg = results[i]
+            let segMid = (seg.startTime + seg.endTime) / 2.0
+            var bestDist = Double.infinity
+            var bestSpeaker: String?
+            for d in diarization {
+                let dMid = (d.startTime + d.endTime) / 2.0
+                let dist = abs(segMid - dMid)
+                if dist < bestDist {
+                    bestDist = dist
+                    bestSpeaker = d.speakerId
+                }
+            }
+            if let speaker = bestSpeaker {
+                results[i].speakerLabel = speaker
+                AppLog.info("[Alignment] Fallback nearest-neighbor: segment \(seg.id) (t=\(String(format: "%.2f", seg.startTime))-\(String(format: "%.2f", seg.endTime))) → \(speaker) (dist=\(String(format: "%.2f", bestDist))s)")
+            }
+        }
         return results
     }
 }

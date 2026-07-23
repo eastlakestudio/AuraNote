@@ -382,6 +382,8 @@ struct NewMeetingSheet: View {
                 try FileManager.default.copyItem(at: url, to: tempURL)
                 tempSelectedAudioURL = tempURL
                 originalAudioFileName = url.lastPathComponent
+                // 从音频元数据提取真实录制时间，立即覆盖表单日期选择器
+                viewModel.updateFormDateFromAudioFile(at: tempURL)
             } catch {
                 AppLog.error("Failed to copy audio file to temp directory: \(error.localizedDescription)")
             }

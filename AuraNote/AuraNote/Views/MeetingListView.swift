@@ -16,10 +16,23 @@ struct MeetingListView: View {
     @State private var deleteGroupClipCounts: [String: Int] = [:]
     @State private var downloadStateVersion = 0
 
+    // 批量管理
+    @State private var batchSelectMode = false
+    @State private var selectedMeetingIds: Set<String> = []
+    @State private var showBatchDeleteConfirm = false
+
+    // 引导向导：nil = 不显示, 0/1/2 = 当前高亮步骤
+    @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
+    @State private var wizardStep: Int? = nil
+
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
                 statusHeader
+
+                if batchSelectMode, let vm = listVM {
+                    batchToolbar(allMeetings: vm.meetings)
+                }
 
                 if !SettingsManager.shared.isModelAvailable && !SettingsManager.shared.currentModelDownloading {
                     modelDownloadBanner
@@ -29,7 +42,7 @@ struct MeetingListView: View {
                     if vm.meetings.isEmpty {
                         emptyState
                     } else {
-                        meetingList(vm.meetings)
+                        meetingList(vm.groupedMeetings)
                     }
                 } else {
                     ProgressView()
@@ -47,17 +60,46 @@ struct MeetingListView: View {
             #endif
             .toolbar {
                 ToolbarItemGroup(placement: .primaryAction) {
+                    Button {
+                        // 手动触发向导（允许重复查看）
+                        wizardStep = 0
+                    } label: {
+                        Image(systemName: "questionmark.circle")
+                    }
+                    .frame(width: 32)
+                    .help(loc("wizard_help"))
+
                     NavigationLink(destination: SettingsView()) {
                         Image(systemName: "gearshape")
                     }
                     .frame(width: 32)
                     .help(loc("settings"))
+                    .popover(isPresented: wizardBinding(for: 0), arrowEdge: .bottom) {
+                        WizardPopoverContent(
+                            step: 0, totalSteps: 3,
+                            icon: "gearshape",
+                            title: loc("wizard_settings_title"),
+                            desc: loc("wizard_settings_desc"),
+                            onNext: { wizardStep = 1 },
+                            onSkip: finishOnboarding
+                        )
+                    }
 
                     NavigationLink(destination: PersonnelManagementView()) {
                         Image(systemName: "person.2")
                     }
                     .frame(width: 32)
                     .help(loc("personnel_voiceprint_help"))
+                    .popover(isPresented: wizardBinding(for: 1), arrowEdge: .bottom) {
+                        WizardPopoverContent(
+                            step: 1, totalSteps: 3,
+                            icon: "person.2",
+                            title: loc("wizard_personnel_title"),
+                            desc: loc("wizard_personnel_desc"),
+                            onNext: { wizardStep = 2 },
+                            onSkip: finishOnboarding
+                        )
+                    }
 
                     Button {
                         recordingVM.onTapStartRecording()
@@ -67,6 +109,27 @@ struct MeetingListView: View {
                     .frame(width: 32)
                     .help(loc("start_meeting"))
                     .disabled(!SettingsManager.shared.isModelAvailable)
+                    .popover(isPresented: wizardBinding(for: 2), arrowEdge: .bottom) {
+                        WizardPopoverContent(
+                            step: 2, totalSteps: 3,
+                            icon: "pencil.and.list.clipboard",
+                            title: loc("wizard_meeting_title"),
+                            desc: loc("wizard_meeting_desc"),
+                            onNext: {},
+                            onSkip: finishOnboarding
+                        )
+                    }
+
+                    if let vm = listVM, !vm.meetings.isEmpty {
+                        Button {
+                            batchSelectMode.toggle()
+                            if !batchSelectMode { selectedMeetingIds = [] }
+                        } label: {
+                            Image(systemName: batchSelectMode ? "checkmark.circle.fill" : "checklist")
+                        }
+                        .frame(width: 32)
+                        .help(batchSelectMode ? loc("done") : loc("batch_manage"))
+                    }
                 }
             }
             .sheet(isPresented: $recordingVM.showNewMeetingSheet) {
@@ -92,7 +155,27 @@ struct MeetingListView: View {
             } message: {
                 Text("\(permissionAlertMessage)\n\n\(loc("permission_hint"))")
             }
+            .alert(loc("batch_delete_meetings"), isPresented: $showBatchDeleteConfirm) {
+                Button(loc("cancel"), role: .cancel) { }
+                Button(loc("delete"), role: .destructive) {
+                    for id in selectedMeetingIds {
+                        try? databaseManager.deleteMeeting(id: id)
+                    }
+                    selectedMeetingIds = []
+                    batchSelectMode = false
+                    listVM?.loadMeetings()
+                }
+            } message: {
+                Text(String(format: loc("batch_delete_meetings_msg"), selectedMeetingIds.count))
+            }
             .onAppear {
+                // 首次启动自动弹出引导向导
+                if !hasCompletedOnboarding {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        wizardStep = 0
+                    }
+                }
+
                 // 检测已下载的模型版本
                 let s = SettingsManager.shared
                 if s.modelVersion.isEmpty {
@@ -195,45 +278,122 @@ struct MeetingListView: View {
         }
     }
 
-    private func meetingList(_ meetings: [Meeting]) -> some View {
-        List(meetings) { meeting in
-            Button {
-                recordingVM.currentMeeting = meeting
-                let finalPath = meeting.localAudioURL.path
-                recordingVM.currentMeeting?.audioPath = finalPath
+    // MARK: - 批量管理
 
-                // 探测音频实际时长
-                var duration = TimeInterval(meeting.duration)
-                if let player = try? AVAudioPlayer(contentsOf: URL(fileURLWithPath: finalPath)) {
-                    if player.duration > 0 {
-                        duration = player.duration
-                    }
-                }
-                recordingVM.audioPlayer.duration = duration
-                recordingVM.audioPlayer.currentTime = 0
-
-                recordingVM.loadSegmentsFromDatabase(meetingId: meeting.id)
-                recordingVM.meetingStatus = .reviewing
-            } label: {
-                MeetingRow(meeting: meeting)
-                    .contentShape(Rectangle())
+    private func batchToolbar(allMeetings: [Meeting]) -> some View {
+        HStack(spacing: 12) {
+            Button(loc("select_all")) {
+                selectedMeetingIds = Set(allMeetings.map { $0.id })
             }
-            .buttonStyle(.plain)
-            .contextMenu {
+            .font(.caption)
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+
+            if !selectedMeetingIds.isEmpty {
                 Button(role: .destructive) {
-                    deleteGroupMeetings = databaseManager.fetchMeetingGroup(id: meeting.id)
-                    var counts: [String: Int] = [:]
-                    for m in deleteGroupMeetings {
-                        counts[m.id] = databaseManager.fetchSpeechClipsCount(meetingId: m.id)
-                    }
-                    deleteGroupClipCounts = counts
-                    showDeleteSheet = true
+                    showBatchDeleteConfirm = true
                 } label: {
-                    Label(loc("delete_meeting"), systemImage: "trash")
+                    Label(
+                        String(format: loc("batch_delete_count"), selectedMeetingIds.count),
+                        systemImage: "trash"
+                    )
+                    .font(.caption)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+
+            Spacer()
+
+            Text(String(format: loc("selected_count"), selectedMeetingIds.count))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(.regularMaterial)
+    }
+
+    private func meetingList(_ groups: [MeetingGroup]) -> some View {
+        List {
+            ForEach(groups) { group in
+                Section {
+                    ForEach(group.meetings) { meeting in
+                        HStack(spacing: 8) {
+                            if batchSelectMode {
+                                let isSelected = selectedMeetingIds.contains(meeting.id)
+                                Button {
+                                    if isSelected {
+                                        selectedMeetingIds.remove(meeting.id)
+                                    } else {
+                                        selectedMeetingIds.insert(meeting.id)
+                                    }
+                                } label: {
+                                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                                        .foregroundStyle(isSelected ? .purple : .secondary)
+                                        .font(.title3)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                            Button {
+                                guard !batchSelectMode else { return }
+                                recordingVM.currentMeeting = meeting
+                                let finalPath = meeting.localAudioURL.path
+                                recordingVM.currentMeeting?.audioPath = finalPath
+
+                                var duration = TimeInterval(meeting.duration)
+                                if let player = try? AVAudioPlayer(contentsOf: URL(fileURLWithPath: finalPath)) {
+                                    if player.duration > 0 {
+                                        duration = player.duration
+                                    }
+                                }
+                                recordingVM.audioPlayer.duration = duration
+                                recordingVM.audioPlayer.currentTime = 0
+
+                                recordingVM.loadSegmentsFromDatabase(meetingId: meeting.id)
+                                recordingVM.meetingStatus = .reviewing
+                            } label: {
+                                MeetingRow(meeting: meeting)
+                            }
+                            .buttonStyle(.plain)
+                            .contentShape(Rectangle())
+                        }
+                        .contextMenu {
+                            Button(role: .destructive) {
+                                deleteGroupMeetings = databaseManager.fetchMeetingGroup(id: meeting.id)
+                                var counts: [String: Int] = [:]
+                                for m in deleteGroupMeetings {
+                                    counts[m.id] = databaseManager.fetchSpeechClipsCount(meetingId: m.id)
+                                }
+                                deleteGroupClipCounts = counts
+                                showDeleteSheet = true
+                            } label: {
+                                Label(loc("delete_meeting"), systemImage: "trash")
+                            }
+                        }
+                    }
+                } header: {
+                    Text(loc(group.group.localeKey))
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(.secondary)
                 }
             }
         }
         .listStyle(.sidebar)
+    }
+
+    // MARK: - 向导辅助
+
+    /// 弹出层绑定：仅当向导处于指定步骤时展示对应按钮的 popover（\(.constant 阻止点击外部关闭）
+    private func wizardBinding(for step: Int) -> Binding<Bool> {
+        .constant(wizardStep == step)
+    }
+
+    /// 结束向导并标记已完成
+    private func finishOnboarding() {
+        wizardStep = nil
+        hasCompletedOnboarding = true
     }
 
     private func exportAudioFile(_ sourcePath: String) {
@@ -513,5 +673,72 @@ struct DeleteMeetingSheet: View {
         case .processingLlm: return .blue
         case .completed: return .green
         }
+    }
+}
+
+// MARK: - 向导气泡内容
+
+/// 单个步骤的 popover 内容：步骤指示、图标、标题、描述、操作按钮
+struct WizardPopoverContent: View {
+    let step: Int
+    let totalSteps: Int
+    let icon: String
+    let title: String
+    let desc: String
+    let onNext: () -> Void
+    let onSkip: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            // 步骤指示 + 跳过
+            HStack {
+                Text("\(step + 1) / \(totalSteps)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 2)
+                    .background(.quaternary)
+                    .clipShape(Capsule())
+                Spacer()
+                Button(loc("skip")) { onSkip() }
+                    .buttonStyle(.plain)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            // 图标 + 标题
+            HStack(spacing: 10) {
+                Image(systemName: icon)
+                    .font(.title2)
+                    .foregroundStyle(.purple)
+                    .frame(width: 28)
+                Text(title)
+                    .font(.headline)
+            }
+
+            // 描述文字
+            Text(desc)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            // 操作按钮
+            HStack {
+                Spacer()
+                if step < totalSteps - 1 {
+                    Button(loc("wizard_next")) { onNext() }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                        .tint(.purple)
+                } else {
+                    Button(loc("start_using")) { onSkip() }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                        .tint(.purple)
+                }
+            }
+        }
+        .padding()
+        .frame(width: 260)
     }
 }

@@ -53,6 +53,35 @@ final class DatabaseManager {
         }
     }
 
+    // MARK: - 事务管理
+
+    func beginTransaction() throws {
+        var errMsg: UnsafeMutablePointer<CChar>?
+        if sqlite3_exec(db, "BEGIN TRANSACTION", nil, nil, &errMsg) != SQLITE_OK {
+            let msg = errMsg.map { String(cString: $0) } ?? "unknown"
+            sqlite3_free(errMsg)
+            throw DBError.executeFailed(msg)
+        }
+    }
+
+    func commitTransaction() throws {
+        var errMsg: UnsafeMutablePointer<CChar>?
+        if sqlite3_exec(db, "COMMIT", nil, nil, &errMsg) != SQLITE_OK {
+            let msg = errMsg.map { String(cString: $0) } ?? "unknown"
+            sqlite3_free(errMsg)
+            throw DBError.executeFailed(msg)
+        }
+    }
+
+    func rollbackTransaction() throws {
+        var errMsg: UnsafeMutablePointer<CChar>?
+        if sqlite3_exec(db, "ROLLBACK", nil, nil, &errMsg) != SQLITE_OK {
+            let msg = errMsg.map { String(cString: $0) } ?? "unknown"
+            sqlite3_free(errMsg)
+            throw DBError.executeFailed(msg)
+        }
+    }
+
     // MARK: - 数据库初始化
 
     private func openDatabase() {
@@ -191,6 +220,18 @@ final class DatabaseManager {
             }
             if !hasMeetingEmbed {
                 sqlite3_exec(db, "ALTER TABLE meetings ADD COLUMN embedding_blob BLOB;", nil, nil, nil)
+            }
+
+            // 增量检查 contacts 表的 voice_embedding_duration 字段（REAL，累计声纹采样时长）
+            var hasEmbedDuration = false
+            if sqlite3_prepare_v2(db, checkContactSql, -1, &contactStmt, nil) == SQLITE_OK {
+                while sqlite3_step(contactStmt) == SQLITE_ROW {
+                    if let n = columnOptionalText(contactStmt, index: 1), n == "voice_embedding_duration" { hasEmbedDuration = true }
+                }
+                sqlite3_finalize(contactStmt)
+            }
+            if !hasEmbedDuration {
+                sqlite3_exec(db, "ALTER TABLE contacts ADD COLUMN voice_embedding_duration REAL DEFAULT 0;", nil, nil, nil)
             }
         }
     }
@@ -440,6 +481,16 @@ final class DatabaseManager {
             current = parent
         }
         return false
+    }
+
+    /// 检查会议是否存在（轻量级，只查 id）
+    func meetingExists(id: String) -> Bool {
+        let sql = "SELECT 1 FROM meetings WHERE id = ? LIMIT 1"
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return false }
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, id.cString, -1, SQLITE_TRANSIENT)
+        return sqlite3_step(stmt) == SQLITE_ROW
     }
 
     func deleteMeeting(id: String) throws {

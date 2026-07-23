@@ -126,8 +126,9 @@ final class SherpaOnnxDiarizer {
             throw SherpaError.notInitialized
         }
 
-        var cSamples = samples
+        var cSamples = samples  // sherpa-onnx C API 需要可变指针，这里必须拷贝
         let n = Int32(cSamples.count)
+        defer { cSamples.removeAll() }  // 返回前立即释放拷贝内存
 
         let resultPtr: OpaquePointer?
 
@@ -283,8 +284,9 @@ final class SherpaOnnxEmbeddingExtractor {
         let stream = SherpaOnnxSpeakerEmbeddingExtractorCreateStream(ex)
         defer { SherpaOnnxDestroyOnlineStream(stream) }
 
-        var cSamples = samples
+        var cSamples = samples  // sherpa-onnx C API 需要可变指针
         let n = Int32(cSamples.count)
+        defer { cSamples.removeAll() }  // 返回前立即释放拷贝内存
         SherpaOnnxOnlineStreamAcceptWaveform(stream, sampleRate, &cSamples, n)
         SherpaOnnxOnlineStreamInputFinished(stream)
 
