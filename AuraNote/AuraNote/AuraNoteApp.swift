@@ -4,6 +4,19 @@ import AppKit
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // 单进程锁：如果发现同 Bundle ID 的其他进程已在运行，则唤醒它并退出当前进程
+        if let bundleId = Bundle.main.bundleIdentifier {
+            let runningApps = NSRunningApplication.runningApplications(withBundleIdentifier: bundleId)
+            if runningApps.count > 1 {
+                for app in runningApps where app != NSRunningApplication.current {
+                    app.activate(options: [.activateIgnoringOtherApps])
+                    break
+                }
+                NSApp.terminate(nil)
+                return
+            }
+        }
+
         // 移除不必要的系统菜单，仅保留 App 菜单（关于、退出等）
         guard let mainMenu = NSApp.mainMenu else { return }
         let toRemove = ["File", "Edit", "View", "Format", "Window", "Help"]
@@ -23,7 +36,7 @@ struct AuraNoteApp: App {
     @State private var databaseManager = DatabaseManager()
 
     var body: some Scene {
-        WindowGroup {
+        Window("AuraNote", id: "main") {
             ContentView()
                 .frame(minWidth: 960, minHeight: 760)
                 .environment(databaseManager)

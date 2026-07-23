@@ -54,6 +54,9 @@ final class RecordingViewModel {
     var offlineTotalSegments: Int = 0
     /// 转写进度 0.0~1.0（基于已发现段数与估计总量的比值）
     var offlineProgressFraction: Double = 0
+    /// 已处理音频/声纹时长（秒）与总音频时长（秒）
+    var processedDiarizationDuration: Double = 0
+    var totalAudioDuration: Double = 0
     private var transcriptionTask: Task<Void, Never>?
     nonisolated(unsafe) var lastDiarEmbeddings: [String: [Float]]?
 
@@ -211,7 +214,7 @@ final class RecordingViewModel {
                     startTime: chunk.startTime,
                     endTime: chunk.endTime,
                     text: "",
-                    speakerLabel: chunk.speakerLabel ?? "Speaker_1",
+                    speakerLabel: chunk.speakerLabel ?? "?",
                     isFinal: false
                 )
             }
@@ -220,7 +223,7 @@ final class RecordingViewModel {
                 startTime: chunk.startTime,
                 endTime: chunk.endTime,
                 text: text,
-                speakerLabel: chunk.speakerLabel ?? "Speaker_1",
+                speakerLabel: chunk.speakerLabel ?? "?",
                 isFinal: true
             )
         }
@@ -283,7 +286,7 @@ final class RecordingViewModel {
                 // 保留用户手动修改的标签
                 var customLabels: [String: (label: String, contactId: String?)] = [:]
                 for seg in currentSegments {
-                    if !seg.speakerLabel.isEmpty && !seg.speakerLabel.hasPrefix("Speaker_") {
+                    if !seg.speakerLabel.isEmpty && !seg.speakerLabel.hasPrefix("Speaker_") && seg.speakerLabel != "?" {
                         customLabels[seg.id] = (seg.speakerLabel, seg.contactId)
                     }
                 }
@@ -358,7 +361,7 @@ final class RecordingViewModel {
                 self.offlineProgressFraction = 1.0
                 self.saveSegmentsToDatabase(meetingId: meetingId)
                 self.isTranscribingOffline = false
-                let allLabeled = aligned.filter { $0.isFinal }.allSatisfy { !$0.speakerLabel.isEmpty }
+                let allLabeled = aligned.filter { $0.isFinal }.allSatisfy { !$0.speakerLabel.isEmpty && $0.speakerLabel != "?" }
                 safeUpdateStatus(id: meetingId, status: allLabeled ? .completed : .pendingDiarization)
             }
         }
@@ -399,7 +402,7 @@ final class RecordingViewModel {
                             displaySegments.append(TranscriptSegment(
                                 id: "placeholder_seed_\(meetingId)_\(placeholderIdx)",
                                 startTime: pStart, endTime: pEnd,
-                                text: "", speakerLabel: "Speaker_1",
+                                text: "", speakerLabel: "?",
                                 isFinal: true, isPlaceholder: true
                             ))
                             placeholderIdx += 1
@@ -417,7 +420,7 @@ final class RecordingViewModel {
                         displaySegments.append(TranscriptSegment(
                             id: "placeholder_seed_\(meetingId)_\(placeholderIdx)",
                             startTime: pStart, endTime: min(totalDuration, pEnd),
-                            text: "", speakerLabel: "Speaker_1",
+                            text: "", speakerLabel: "?",
                             isFinal: true, isPlaceholder: true
                         ))
                         placeholderIdx += 1
@@ -429,20 +432,26 @@ final class RecordingViewModel {
                 displaySegments.append(TranscriptSegment(
                     id: "placeholder_seed_\(meetingId)_0",
                     startTime: 0, endTime: max(1, totalDuration),
-                    text: "", speakerLabel: "Speaker_1",
+                    text: "", speakerLabel: "?",
                     isFinal: true, isPlaceholder: true
                 ))
             }
             displaySegments.sort { $0.startTime < $1.startTime }
             self.transcriptSegments = displaySegments
-            self.segmentCount = realtimeSegs.count
+            self.segmentCount = 0  // 重新分析时段数从 0 起步重新累加
         } else {
             // 导入音频场景：不预建占位段，Whisper 产出逐步追加显示
             self.offlineTotalSegments = 0
             self.transcriptSegments = []
             self.segmentCount = 0
         }
-        self.offlineProgressFraction = 0  // 离线转录刚开始，进度从 0 起步
+        self.offlineProgressFraction = 0
+        self.processedDiarizationDuration = 0
+        if let m = self.currentMeeting, m.duration > 0 {
+            self.totalAudioDuration = Double(m.duration)
+        } else {
+            self.totalAudioDuration = 0
+        }
 
         // 消费者累积的真实段（与占位段分开管理）
         var consumerRealSegments: [TranscriptSegment] = []
@@ -479,7 +488,9 @@ final class RecordingViewModel {
                         // 基于已覆盖时长并集 / 音频总时长 计算进度（单调递增，不会跳跃）
                         if let m = self.currentMeeting, m.duration > 0 {
                             let covered = coveredIntervals.reduce(0.0) { $0 + ($1.1 - $1.0) }
-                            self.offlineProgressFraction = min(0.99, max(0.01, covered / Double(m.duration)))
+                            self.processedDiarizationDuration = max(self.processedDiarizationDuration, covered)
+                            self.totalAudioDuration = Double(m.duration)
+                            self.offlineProgressFraction = min(0.99, max(0.01, self.processedDiarizationDuration / Double(m.duration)))
                         }
                     }
                 }
@@ -506,7 +517,7 @@ final class RecordingViewModel {
 
                         var customLabels: [String: (label: String, contactId: String?)] = [:]
                         for seg in allReal {
-                            if !seg.speakerLabel.hasPrefix("Speaker_") {
+                            if !seg.speakerLabel.isEmpty && !seg.speakerLabel.hasPrefix("Speaker_") && seg.speakerLabel != "?" {
                                 customLabels[seg.id] = (seg.speakerLabel, seg.contactId)
                             }
                         }
@@ -560,7 +571,7 @@ final class RecordingViewModel {
                                 TranscriptSegment(
                                     id: "placeholder_fill_\(meetingId)_\(i)",
                                     startTime: 0, endTime: 0,
-                                    text: "", speakerLabel: "Speaker_1",
+                                    text: "", speakerLabel: "?",
                                     isFinal: true, isPlaceholder: true
                                 )
                             }
@@ -585,7 +596,7 @@ final class RecordingViewModel {
                             TranscriptSegment(
                                 id: "placeholder_fill_\(meetingId)_\(i)",
                                 startTime: 0, endTime: 0,
-                                text: "", speakerLabel: "Speaker_1",
+                                text: "", speakerLabel: "?",
                                 isFinal: true, isPlaceholder: true
                             )
                         }
@@ -606,12 +617,21 @@ final class RecordingViewModel {
             }
         }
 
+        let meetingTitlePrefix = self.currentMeeting?.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanMeetingTitle = (meetingTitlePrefix?.isEmpty == false) ? meetingTitlePrefix! : "未命名会议"
+
         // 后台生产者
-        transcriptionTask = Task.detached { [weak self] in
+        transcriptionTask = Task.detached { [weak self, cleanMeetingTitle] in
             guard let self = self else { return }
             defer {
                 consumerTask.cancel()
-                Task { @MainActor [weak self] in self?.isTranscribingOffline = false }
+                Task { @MainActor [weak self] in
+                    self?.isTranscribingOffline = false
+                    if let self = self {
+                        self.processedDiarizationDuration = self.totalAudioDuration
+                        self.offlineProgressFraction = 1.0
+                    }
+                }
             }
 
             do {
@@ -624,50 +644,34 @@ final class RecordingViewModel {
                 let samples = try await DiarizationService.shared.loadAudioSamples(audioURL)
                 AppLog.info("[Diar] audio preloaded: \(samples.count) samples")
 
-                // 创建消息池：Whisper 产出边界 → diar 消费
-                let (boundaryStream, boundaryContinuation) = AsyncStream<(Double, Double)>.makeStream()
-                var yieldedCount = 0
-
-                // 并行启动声纹提取（从 stream 消费边界，边到达边处理）
-                async let diarTask = DiarizationService.shared.diarizeFromStream(
+                // 弃用流式管道，改用全局高精处理长音频（如 SherpaOnnxTestView），并发执行完整的声纹分离与转写
+                async let diarTask = DiarizationService.shared.diarizeWithEmbeddings(
                     samples: samples,
-                    boundaryStream: boundaryStream,
-                    onIncrementalResult: { segments, embeddings in
-                        let spkCount = Set(segments.map(\.speakerId)).count
-                        if segments.count % 5 == 0 {
-                            AppLog.info("[Diar] stream update: \(segments.count) segments, \(spkCount) speakers")
+                    audioURL: audioURL,
+                    onProgress: { progress in
+                        Task { @MainActor [weak self] in
+                            guard let self = self else { return }
+                            // 以声纹进度为基准更新 UI（全局处理进度）
+                            if self.totalAudioDuration > 0 {
+                                self.processedDiarizationDuration = Double(progress) * self.totalAudioDuration
+                                self.offlineProgressFraction = min(0.99, max(0.01, Double(progress)))
+                            }
                         }
-                        await sharedState.setDiarization(segments, embeddings: embeddings)
-                    },
-                    onClusteringComplete: { count in
-                        AppLog.info("[Diar] clustering complete: \(count) speakers")
                     }
                 )
 
-                // Whisper 转写（主线程等待，同时产出边界到 stream 供 diar 并行处理）
+                // Whisper 转写（主线程等待，并推送文本段给 UI 消费者，实现“先出文本、再对齐声纹”的效果）
                 let offlineSegments = try await WhisperService.shared.transcribe(
                     audioURL: audioURL, meetingId: meetingId, language: speechLang,
                     onSegments: { partialSegments in
-                        // 将新边界推送到声纹处理流（增量，不重复）
-                        if partialSegments.count > yieldedCount {
-                            for i in yieldedCount..<partialSegments.count {
-                                let seg = partialSegments[i]
-                                boundaryContinuation.yield((seg.startTime, seg.endTime))
-                            }
-                            yieldedCount = partialSegments.count
-                        }
-                        // 同时推送到 UI 消费者循环
                         segmentQueue.async { pendingChunks.append(partialSegments) }
                     }
                 )
                 try Task.checkCancellation()
+                AppLog.info("[Diar] Whisper complete: \(offlineSegments.count) segments, awaiting global diarization...")
 
-                // Whisper 完成，关闭边界流，通知 diar 不再有新段
-                boundaryContinuation.finish()
-                AppLog.info("[Diar] Whisper complete: \(offlineSegments.count) segments, awaiting diar...")
-
-                // 等待声纹提取收尾
-                let diarOutput = await diarTask
+                // 等待全局高精声纹分离完成
+                let diarOutput = try await diarTask
 
                 let speakerCount = Set(diarOutput.segments.map(\.speakerId)).count
                 AppLog.info("[Diar] Voiceprint diarization result: \(speakerCount) speakers, \(diarOutput.segments.count) segments | config: incrClusterDist=\(SettingsManager.shared.incrementalClusteringDistance)")
@@ -708,14 +712,16 @@ final class RecordingViewModel {
                     if !autoMap.isEmpty { await sharedState.setSpeakerMap(autoMap) }
                 }
 
-                // 若 Speaker 在通讯录中不存在，立即自动存入通讯录，确保下一次直接匹配！
+                // 若 Speaker 在通讯录中未完全匹配上，以 会议名_Speaker_X 命名和 meetingId_Speaker_X ID 自动写入全局通讯录，便于区分与跨场匹配！
                 for (speakerId, emb) in matchEmbeddings {
-                    if !emb.isEmpty {
+                    if !matchedSpeakerIds.contains(speakerId) && !emb.isEmpty {
+                        let tempContactId = "\(meetingId)_\(speakerId)"
+                        let tempContactName = "\(cleanMeetingTitle)_\(speakerId)"
                         do {
-                            try await self.databaseManager.saveOrUpdateSpeakerContact(speakerId: speakerId, name: speakerId, embedding: emb)
-                            AppLog.info("[Diar] Speaker '\(speakerId)' auto-saved to global contacts database")
+                            try await self.databaseManager.saveOrUpdateSpeakerContact(speakerId: tempContactId, name: tempContactName, embedding: emb)
+                            AppLog.info("[Diar] Unmatched speaker '\(speakerId)' auto-saved to global contacts as '\(tempContactName)' (\(tempContactId))")
                         } catch {
-                            AppLog.error("[Diar] Failed to auto-save speaker \(speakerId) to contacts: \(error.localizedDescription)")
+                            AppLog.error("[Diar] Failed to auto-save temp speaker \(speakerId) to contacts: \(error.localizedDescription)")
                         }
                     }
                 }
@@ -741,7 +747,7 @@ final class RecordingViewModel {
                 let currentSegs = await MainActor.run { self.transcriptSegments }
                 var customLabels: [String: (label: String, contactId: String?)] = [:]
                 for seg in currentSegs {
-                    if !seg.speakerLabel.isEmpty, !seg.speakerLabel.hasPrefix("Speaker_") {
+                    if !seg.speakerLabel.isEmpty && !seg.speakerLabel.hasPrefix("Speaker_") && seg.speakerLabel != "?" {
                         customLabels[seg.id] = (seg.speakerLabel, seg.contactId)
                     }
                 }
@@ -776,7 +782,7 @@ final class RecordingViewModel {
                         guard s.speakerLabel.hasPrefix("Speaker_") else { return s }
                         var bestMatch: TranscriptSegment?
                         var bestOverlap: Double = 0
-                        for rt in savedRealtimeSegments where !rt.speakerLabel.hasPrefix("Speaker_") {
+                        for rt in savedRealtimeSegments where !rt.speakerLabel.isEmpty && !rt.speakerLabel.hasPrefix("Speaker_") && rt.speakerLabel != "?" {
                             let overlapStart = max(s.startTime, rt.startTime)
                             let overlapEnd = min(s.endTime, rt.endTime)
                             let overlap = max(0, overlapEnd - overlapStart)
@@ -813,7 +819,7 @@ final class RecordingViewModel {
                     self.offlineTotalSegments = finalSegments.count
                     self.offlineProgressFraction = 1.0
                     self.saveSegmentsToDatabase(meetingId: meetingId)
-                    let allLabeled = finalSegments.filter { $0.isFinal }.allSatisfy { !$0.speakerLabel.isEmpty }
+                    let allLabeled = finalSegments.filter { $0.isFinal }.allSatisfy { !$0.speakerLabel.isEmpty && $0.speakerLabel != "?" }
                     safeUpdateStatus(id: meetingId, status: allLabeled ? .completed : .pendingDiarization)
                     AppLog.info("Offline transcription + diarization complete: \(finalSegments.count) segments")
                     // 兜底：为所有已映射到联系人的 segment 保存声纹向量（优先原始波形声纹）
@@ -844,7 +850,7 @@ final class RecordingViewModel {
                     AppLog.warn("Offline transcription timed out but has \(existingCount) existing segments, using partial results")
                     await MainActor.run {
                         self.saveSegmentsToDatabase(meetingId: meetingId)
-                        let allLabeled = self.transcriptSegments.filter { $0.isFinal }.allSatisfy { !$0.speakerLabel.isEmpty }
+                        let allLabeled = self.transcriptSegments.filter { $0.isFinal }.allSatisfy { !$0.speakerLabel.isEmpty && $0.speakerLabel != "?" }
                         self.safeUpdateStatus(id: meetingId, status: allLabeled ? .completed : .pendingDiarization)
                     }
                 } else {
@@ -939,7 +945,7 @@ final class RecordingViewModel {
             return
         }
         let trimmed = name.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else { return }
+        guard !trimmed.isEmpty, trimmed != "?" else { return }
         let current = meeting.attendees ?? ""
         var list = current.isEmpty ? [] : current.split(separator: " ").map(String.init)
         guard !list.contains(trimmed) else { return }
@@ -1036,7 +1042,7 @@ final class RecordingViewModel {
         }
         // 修正历史数据：若状态为 completed 但实际段未全部标注，回退为 pendingDiarization
         if let meeting = currentMeeting, meeting.status == .completed {
-            let allLabeled = transcriptSegments.allSatisfy { !$0.speakerLabel.isEmpty }
+            let allLabeled = transcriptSegments.allSatisfy { !$0.speakerLabel.isEmpty && $0.speakerLabel != "?" }
             if !allLabeled {
                 safeUpdateStatus(id: meetingId, status: .pendingDiarization)
             }
@@ -1181,7 +1187,9 @@ final class RecordingViewModel {
     var uniqueSpeakers: [String] {
         var speakers = Set<String>()
         for segment in transcriptSegments {
-            speakers.insert(segment.speakerLabel)
+            if !segment.speakerLabel.isEmpty && segment.speakerLabel != "?" {
+                speakers.insert(segment.speakerLabel)
+            }
         }
         return Array(speakers).sorted()
     }

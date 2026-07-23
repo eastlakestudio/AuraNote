@@ -54,9 +54,15 @@ enum SpeakerMatcher {
 
         for (speakerId, newEmb) in embeddings {
             for profile in profiles {
+                // 跳过临时发言人特征档案，防止自我匹配（Speaker_X vs Speaker_X 得分 1.0）
+                let isTempProfile = profile.name.hasPrefix("Speaker_") || profile.name.contains("_Speaker_") || profile.id.contains("Speaker_")
+                if isTempProfile || speakerId == profile.name {
+                    continue
+                }
+
                 let score = DiarizationService.cosineSimilarity(newEmb, profile.embedding)
-                AppLog.info("[SpeakerMatcher]   Comparing \(speakerId) vs profile '\(profile.name)' (id: \(profile.id), type: \(profile.sourceType)): score=\(String(format: "%.4f", score)) (matchingThreshold: \(threshold), highConfidenceThreshold: \(highThreshold))")
                 if score >= threshold {
+                    AppLog.info("[SpeakerMatcher]   Candidate match: \(speakerId) vs '\(profile.name)' (type: \(profile.sourceType)): score=\(String(format: "%.4f", score)) >= threshold \(threshold)")
                     candidates.append((speakerId, profile, score))
                 }
             }

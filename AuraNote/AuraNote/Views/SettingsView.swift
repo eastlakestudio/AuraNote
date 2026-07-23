@@ -65,6 +65,7 @@ let zhLocale: [String: String] = [
     "transcribing_progress": "转写中...",
     "transcribing_segments": "已完成 %d 段 · %d%%",
     "transcribing_segments_done": "已完成 %d / %d 段 (%d%%)",
+    "transcribing_segments_with_time": "已完成 %d 段 · %@ / %@ (%d%%)",
     "transcribing_placeholder": "等待转写中...",
     "debug_log": "调试日志",
     "analyzing": "分析中...",
@@ -346,6 +347,7 @@ let enLocale: [String: String] = [
     "transcribing_progress": "Transcribing...",
     "transcribing_segments": "%d segments · %d%%",
     "transcribing_segments_done": "%d / %d segments (%d%%)",
+    "transcribing_segments_with_time": "%d segments · %@ / %@ (%d%%)",
     "transcribing_placeholder": "Awaiting transcription...",
     "debug_log": "Debug Log",
     "analyzing": "Analyzing...",
@@ -941,8 +943,8 @@ struct SettingsView: View {
         settings.targetPeak = 0.7
         settings.baseGain = 1.5
         settings.clusteringThreshold = 0.90
-        settings.incrementalClusteringDistance = 0.30
-        settings.clusterMergeDistance = 0.50
+        settings.incrementalClusteringDistance = 0.28
+        settings.clusterMergeDistance = 0.30
         settings.minDurationOn = 0.5
         settings.minDurationOff = 0.5
         settings.matchingThreshold = 0.70

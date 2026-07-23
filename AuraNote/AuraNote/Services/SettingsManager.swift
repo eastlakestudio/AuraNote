@@ -60,12 +60,12 @@ final class SettingsManager {
     var clusteringThreshold: Double = 0.90 {
         didSet { defaults.set(clusteringThreshold, forKey: "sherpa_cluster_dist") }
     }
-    /// 增量聚类距离阈值（逐段，余弦距离 0~2）：eres2net 黄金判决边界 0.36，低于此距离归为同一人，高于此距离严禁合并
-    var incrementalClusteringDistance: Float = 0.36 {
+    /// 增量聚类距离阈值（逐段，余弦距离 0~2）：0.70
+    var incrementalClusteringDistance: Float = 0.70 {
         didSet { defaults.set(incrementalClusteringDistance, forKey: "algo_incremental_cluster_dist") }
     }
-    /// 聚类级合并距离阈值（簇质心互比，余弦距离 0~2）：eres2net 黄金判决边界 0.38，严格区分异人
-    var clusterMergeDistance: Float = 0.38 {
+    /// 聚类级合并距离阈值（簇质心互比，余弦距离 0~2）：0.70
+    var clusterMergeDistance: Float = 0.70 {
         didSet { defaults.set(clusterMergeDistance, forKey: "algo_cluster_merge_dist") }
     }
     /// 最短语音段（秒），sherpa-onnx diarization。范围 0.1~2.0
@@ -81,7 +81,7 @@ final class SettingsManager {
         didSet { defaults.set(matchingThreshold, forKey: "algo_matching_threshold") }
     }
     /// 声纹匹配高置信度阈值，高于此值自动绑定。范围 0.5~0.95
-    var highConfidenceThreshold: Float = 0.75 {
+    var highConfidenceThreshold: Float = 0.55 {
         didSet { defaults.set(highConfidenceThreshold, forKey: "algo_high_confidence_threshold") }
     }
     /// 实时录音声纹匹配阈值（与离线共用同一管线，默认同 matchingThreshold）。范围 0.3~0.8
@@ -226,8 +226,10 @@ final class SettingsManager {
         maxGain = d.object(forKey: "algo_max_gain") as? Float ?? 10.0
         baseGain = d.object(forKey: "algo_base_gain") as? Float ?? 1.5
         clusteringThreshold = d.object(forKey: "sherpa_cluster_dist") as? Double ?? 0.90
-        incrementalClusteringDistance = 0.36
-        clusterMergeDistance = 0.38
+        let savedIncr = d.object(forKey: "algo_incremental_cluster_dist") as? Float
+        incrementalClusteringDistance = (savedIncr == 0.36 || savedIncr == nil) ? 0.28 : savedIncr!
+        let savedMerge = d.object(forKey: "algo_cluster_merge_dist") as? Float
+        clusterMergeDistance = (savedMerge == 0.38 || savedMerge == 0.50 || savedMerge == nil) ? 0.30 : savedMerge!
         minDurationOn = d.object(forKey: "sherpa_min_duration_on") as? Float ?? 0.5
         minDurationOff = d.object(forKey: "sherpa_min_duration_off") as? Float ?? 0.5
         matchingThreshold = d.object(forKey: "algo_matching_threshold") as? Float ?? 0.70

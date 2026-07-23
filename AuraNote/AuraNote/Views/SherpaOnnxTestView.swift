@@ -12,7 +12,7 @@ struct SherpaOnnxTestView: View {
     @State private var audioSampleRate: String = ""
 
     // 参数
-    @State private var threshold: Double = 1.2     // 聚类距离阈值 (余弦距离 0~2，默认 1.2，越低人越多)
+    @AppStorage("sherpaTestThreshold") var threshold: Double = 0.70    // 增量聚类合并阈值 (余弦距离，默认 0.28，越低越严格/人越多)
     @State private var numSpeakers: Double = -1     // 预期说话人数（-1=自动）
     @State private var minDurationOn: Double = 0.5
     @State private var minDurationOff: Double = 0.5
@@ -24,6 +24,11 @@ struct SherpaOnnxTestView: View {
     @State private var resultSegments: [SegmentDisplay] = []
     @State private var resultSpeakerCount: Int = 0
     @State private var showFilePicker = false
+    
+    // 播放控制
+    @State private var audioPlayer: AVAudioPlayer?
+    @State private var playTimer: Timer?
+    @State private var playingSegmentID: UUID?
 
     // 模型状态
     @State private var segModelExists = false
@@ -386,27 +391,37 @@ struct SherpaOnnxTestView: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 2) {
                         ForEach(resultSegments) { seg in
-                            HStack(spacing: 8) {
-                                Circle()
-                                    .fill(speakerColor(seg.speaker))
-                                    .frame(width: 8, height: 8)
-                                Text("说话人 \(seg.speaker)")
-                                    .font(.caption)
-                                    .fontWeight(.medium)
-                                    .foregroundStyle(speakerColor(seg.speaker))
-                                Spacer()
-                                Text("\(formatTime(seg.start)) → \(formatTime(seg.end))")
-                                    .font(.caption)
-                                    .monospacedDigit()
-                                    .foregroundStyle(.secondary)
-                                Text("(\(String(format: "%.1fs", seg.end - seg.start)))")
-                                    .font(.caption2)
-                                    .foregroundStyle(.tertiary)
+                            Button(action: {
+                                playSegment(seg)
+                            }) {
+                                HStack(spacing: 8) {
+                                    Circle()
+                                        .fill(speakerColor(seg.speaker))
+                                        .frame(width: 8, height: 8)
+                                    Text("说话人 \(seg.speaker)")
+                                        .font(.caption)
+                                        .fontWeight(.medium)
+                                        .foregroundStyle(speakerColor(seg.speaker))
+                                    Spacer()
+                                    if playingSegmentID == seg.id {
+                                        Image(systemName: "speaker.wave.2.fill")
+                                            .foregroundStyle(.blue)
+                                            .font(.caption)
+                                    }
+                                    Text("\(formatTime(seg.start)) → \(formatTime(seg.end))")
+                                        .font(.caption)
+                                        .monospacedDigit()
+                                        .foregroundStyle(.secondary)
+                                    Text("(\(String(format: "%.1fs", seg.end - seg.start)))")
+                                        .font(.caption2)
+                                        .foregroundStyle(.tertiary)
+                                }
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(seg.speaker % 2 == 0 ? Color.clear : Color.primary.opacity(0.03))
+                                .cornerRadius(4)
                             }
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(seg.speaker % 2 == 0 ? Color.clear : Color.primary.opacity(0.03))
-                            .cornerRadius(4)
+                            .buttonStyle(.plain)
                         }
                     }
                 }
@@ -430,9 +445,33 @@ struct SherpaOnnxTestView: View {
                 .foregroundStyle(color)
                 .monospacedDigit()
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 4)
         .background(RoundedRectangle(cornerRadius: 8).fill(color.opacity(0.1)))
+    }
+    
+    // MARK: - Playback
+    
+    private func playSegment(_ seg: SegmentDisplay) {
+        guard let url = selectedFileURL else { return }
+        playTimer?.invalidate()
+        audioPlayer?.stop()
+        
+        do {
+            let player = try AVAudioPlayer(contentsOf: url)
+            player.currentTime = TimeInterval(seg.start)
+            player.play()
+            self.audioPlayer = player
+            self.playingSegmentID = seg.id
+            
+            let duration = TimeInterval(seg.end - seg.start)
+            self.playTimer = Timer.scheduledTimer(withTimeInterval: duration, repeats: false) { _ in
+                self.audioPlayer?.pause()
+                self.playingSegmentID = nil
+            }
+        } catch {
+            print("播放片段失败: \(error)")
+        }
     }
 
     // MARK: - Log
@@ -569,19 +608,21 @@ struct SherpaOnnxTestView: View {
 
                 await self.addLog("音频已加载: \(samples.count) samples, \(sampleRate) Hz", .info)
 
-                // 2. 配置分离器
+                // 2. 配置分离器（底层）
                 var config = SherpaDiarizationConfig()
                 config.segmentationModel = self.segmentationModelPath()
                 config.embeddingModel = self.embeddingModelPath()
-                config.clustering.threshold = Float(self.threshold)
-                config.clustering.numClusters = Int32(self.numSpeakers)
+                // 强制底层聚类极为严格，让它只做高精度的神经网络 VAD 分段，而不做实质性的角色合并
+                // 把聚类合并的权利全部交给我们的外层“全局声纹池”！
+                config.clustering.threshold = 0.1
+                config.clustering.numClusters = -1
                 config.minDurationOn = Float(self.minDurationOn)
                 config.minDurationOff = Float(self.minDurationOff)
 
                 try self.diarizer.create(config: config)
                 let requiredRate = self.diarizer.getSampleRate()
 
-                await self.addLog("分离器已创建，要求采样率: \(requiredRate) Hz", .info)
+                await self.addLog("底层高精度神经网络 VAD 分离器已创建，要求采样率: \(requiredRate) Hz", .info)
 
                 // 3. 重采样（如需要）
                 let finalSamples: [Float]
@@ -593,41 +634,151 @@ struct SherpaOnnxTestView: View {
                     finalSamples = samples
                 }
 
-                // 4. 运行分离
-                await self.addLog("开始分离处理...", .info)
-                var lastLoggedProgress: Float = 0
+                // 4. 先用能量 VAD 粗略找到语音大段（包含可能交错说话的多人），再通过底层 Neural VAD 提取精细片段
+                await self.addLog("开始 能量 VAD 粗筛 + Neural VAD 精细分段 + 全局声纹归并...", .info)
+                let extractor = SherpaOnnxEmbeddingExtractor()
+                try extractor.create(modelPath: self.embeddingModelPath())
+                
+                let sampleRateInt = Int(requiredRate)
+                let totalSamples = finalSamples.count
                 let diarizationStartTime = Date()
-                let result = try self.diarizer.process(samples: finalSamples) { p in
-                    let percent = Int(p * 100)
-                    let lastPercent = Int(lastLoggedProgress * 100)
-                    if percent - lastPercent >= 10 || p >= 1.0 {
-                        lastLoggedProgress = p
-                        let elapsed = Date().timeIntervalSince(diarizationStartTime)
-                        Task { @MainActor in
-                            self.progress = p
-                            self.addLog(String(format: "  进度: %d%% (耗时 %.1fs)", percent, elapsed), .debug)
+                
+                // 全局发言人池: [(id: 全局编号, embedding: 代表声纹)]
+                var globalSpeakers: [(id: Int, embedding: [Float])] = []
+                let distThreshold: Float = Float(self.threshold)
+                
+                var allMergedSegments: [SegmentDisplay] = []
+
+                let vadSegments = DiarizationService.shared.energyVADSegments(samples: finalSamples)
+                await self.addLog("能量 VAD 粗筛检测到 \(vadSegments.count) 个活动大段，开始依次进入高精度分析...", .info)
+                
+                for (chunkIndex, seg) in vadSegments.enumerated() {
+                    let startSample = Int(seg.start * Double(sampleRateInt))
+                    let endSample = min(Int(seg.end * Double(sampleRateInt)), totalSamples)
+                    guard startSample < endSample else { continue }
+                    
+                    let chunkSamples = Array(finalSamples[startSample..<endSample])
+                    let chunkStartSec = seg.start
+                    let chunkEndSec = seg.end
+                    
+                    await self.addLog("▶ 处理大段 \(chunkIndex + 1)/\(vadSegments.count) ([时段: \(String(format: "%.1f", chunkStartSec))s - \(String(format: "%.1f", chunkEndSec))s])...", .info)
+                    
+                    do {
+                        // 调用底层处理当前 30 秒
+                        let chunkResult = try self.diarizer.process(samples: chunkSamples) { _ in }
+                        
+                        // 遍历底层吐出的细粒度 VAD 片段
+                        for seg in chunkResult.segments {
+                            // 换算在 chunk 内的采样索引
+                            let sIdx = min(max(0, Int(seg.start * Float(sampleRateInt))), chunkSamples.count)
+                            let eIdx = min(max(sIdx, Int(seg.end * Float(sampleRateInt))), chunkSamples.count)
+                            guard eIdx > sIdx else { continue }
+                            
+                            let segSamples = Array(chunkSamples[sIdx..<eIdx])
+                            let duration = seg.end - seg.start
+                            
+                            // 过滤过短片段（底层有时会吐出极短噪声）
+                            guard duration >= 0.3 else { continue }
+                            
+                            // 对该纯净单一片段提取声纹
+                            let emb = try extractor.extractEmbedding(samples: segSamples, sampleRate: Int32(sampleRateInt))
+                            
+                            var bestDist: Float = Float.greatestFiniteMagnitude
+                            var bestGlobalIdx: Int? = nil
+                            var distDetails = ""
+                            
+                            // 与全局已有说话人进行余弦距离比对
+                            for (gIdx, globalSpk) in globalSpeakers.enumerated() {
+                                guard !globalSpk.embedding.isEmpty else { continue }
+                                let sim = DiarizationService.cosineSimilarity(emb, globalSpk.embedding)
+                                let dist = 1.0 - sim
+                                distDetails += "[Spk\(globalSpk.id) 距离:\(String(format: "%.3f", dist))] "
+                                
+                                if dist < bestDist {
+                                    bestDist = dist
+                                    bestGlobalIdx = gIdx
+                                }
+                            }
+                            
+                            var assignedGlobalId: Int
+                            if let bestIdx = bestGlobalIdx, bestDist <= distThreshold {
+                                // 匹配成功：归并入已有说话人
+                                let matchedGlobal = globalSpeakers[bestIdx]
+                                assignedGlobalId = matchedGlobal.id
+                                
+                                // 平滑更新声纹质心
+                                var updatedEmb = [Float](repeating: 0, count: emb.count)
+                                for k in 0..<emb.count {
+                                    updatedEmb[k] = (matchedGlobal.embedding[k] + emb[k]) * 0.5
+                                }
+                                globalSpeakers[bestIdx] = (id: matchedGlobal.id, embedding: updatedEmb)
+                                
+                                await self.addLog("  → 局部小段 (时长: \(String(format: "%.1f", duration))s) 归并至 [说话人 \(assignedGlobalId)] (最优距离: \(String(format: "%.3f", bestDist)) <= \(String(format: "%.2f", distThreshold))) | 详情: \(distDetails)", .debug)
+                            } else {
+                                // 匹配失败：创建新说话人
+                                assignedGlobalId = globalSpeakers.count
+                                globalSpeakers.append((id: assignedGlobalId, embedding: emb))
+                                
+                                let distStr = bestGlobalIdx != nil ? String(format: "%.3f", bestDist) : "无"
+                                await self.addLog("  → 局部小段 (时长: \(String(format: "%.1f", duration))s) 新增 [说话人 \(assignedGlobalId)] (最小距离: \(distStr) > \(String(format: "%.2f", distThreshold))) | 详情: \(distDetails)", .debug)
+                            }
+                            
+                            // 换算绝对时间并记录
+                            let absStart = Float(chunkStartSec) + seg.start
+                            let absEnd = Float(chunkStartSec) + seg.end
+                            allMergedSegments.append(SegmentDisplay(start: absStart, end: absEnd, speaker: Int32(assignedGlobalId)))
                         }
-                    } else {
-                        Task { @MainActor in
-                            self.progress = p
-                        }
+                    } catch {
+                        await self.addLog("  ⚠️ 第 \(chunkIndex) 块处理异常或提取失败", .debug)
+                    }
+                    
+                    let currentProgress = Float(chunkIndex + 1) / Float(vadSegments.count)
+                    let currentSegmentsCopy = allMergedSegments
+                    let currentSpeakersCount = globalSpeakers.count
+                    
+                    // 实时刷新 UI
+                    await MainActor.run {
+                        self.progress = min(0.99, currentProgress)
+                        self.resultSegments = currentSegmentsCopy
+                        self.resultSpeakerCount = currentSpeakersCount
+                        self.addLog("⏱️ 大段 \(chunkIndex + 1) 完成，当前进度: \(Int(currentProgress * 100))% | 累计发言人: \(currentSpeakersCount)", .info)
                     }
                 }
 
-                // 5. 展示结果
-                await MainActor.run {
-                    self.resultSpeakerCount = Int(result.numSpeakers)
-                    self.resultSegments = result.segments.map {
-                        SegmentDisplay(start: $0.start, end: $0.end, speaker: $0.speaker)
+                // 5. 展示最终总结果 (合并同说话人的重叠和相邻片段)
+                var mergedFinalSegments: [SegmentDisplay] = []
+                let groupedSegments = Dictionary(grouping: allMergedSegments, by: { $0.speaker })
+                for (speaker, group) in groupedSegments {
+                    let sorted = group.sorted { $0.start < $1.start }
+                    var currentMerged: [SegmentDisplay] = []
+                    for seg in sorted {
+                        if let last = currentMerged.last, seg.start <= last.end + 0.1 {
+                            currentMerged[currentMerged.count - 1] = SegmentDisplay(
+                                start: last.start,
+                                end: max(last.end, seg.end),
+                                speaker: speaker
+                            )
+                        } else {
+                            currentMerged.append(seg)
+                        }
                     }
+                    mergedFinalSegments.append(contentsOf: currentMerged)
+                }
+                mergedFinalSegments.sort { $0.start < $1.start }
+                
+                let finalSegments = mergedFinalSegments
+                let finalSpeakerCount = globalSpeakers.count
+                await MainActor.run {
+                    self.resultSpeakerCount = finalSpeakerCount
+                    self.resultSegments = finalSegments
                     self.isProcessing = false
                     self.progress = 1.0
 
-                    self.addLog("✅ 分离完成!", .info)
-                    self.addLog("说话人数: \(result.numSpeakers)", .info)
-                    self.addLog("片段数: \(result.segments.count)", .info)
+                    self.addLog("✅ 30s 切片 + 全局特征池合并全部完成!", .info)
+                    self.addLog("总说话人数: \(finalSpeakerCount)", .info)
+                    self.addLog("片段总数: \(finalSegments.count)", .info)
 
-                    for seg in result.segments {
+                    for seg in finalSegments {
                         self.addLog(
                             "  [说话人 \(seg.speaker)] \(String(format: "%.2f", seg.start))s → \(String(format: "%.2f", seg.end))s (\(String(format: "%.1f", seg.end - seg.start))s)",
                             .debug

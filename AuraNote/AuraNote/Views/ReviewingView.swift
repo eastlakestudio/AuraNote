@@ -56,11 +56,17 @@ struct ReviewingView: View {
         return finals.allSatisfy { !$0.speakerLabel.isEmpty }
     }
     
+    private func formatTimeMMSS(_ seconds: Double) -> String {
+        let total = Int(max(0, seconds))
+        let mins = total / 60
+        let secs = total % 60
+        return String(format: "%02d:%02d", mins, secs)
+    }
+
     private var transcriptionPercent: Int? {
-        guard viewModel.segmentCount > 0 else { return nil }
         if viewModel.isTranscribingOffline {
             let pct = Int(viewModel.offlineProgressFraction * 100)
-            return max(1, min(99, pct))
+            return max(0, min(99, pct))
         }
         if viewModel.offlineTotalSegments > 0 { return 100 }
         return nil
@@ -71,8 +77,15 @@ struct ReviewingView: View {
         if total > 0 && !viewModel.isTranscribingOffline {
             return String(format: loc("transcribing_segments_done"), viewModel.segmentCount, total, 100)
         }
+        let procStr = formatTimeMMSS(viewModel.processedDiarizationDuration)
+        let totalStr = formatTimeMMSS(viewModel.totalAudioDuration)
+        
         if let pct = transcriptionPercent {
-            return String(format: loc("transcribing_segments"), viewModel.segmentCount, pct)
+            if viewModel.totalAudioDuration > 0 {
+                return String(format: loc("transcribing_segments_with_time"), viewModel.segmentCount, procStr, totalStr, pct)
+            } else {
+                return String(format: loc("transcribing_segments"), viewModel.segmentCount, pct)
+            }
         }
         return loc("transcribing_progress")
     }
@@ -292,7 +305,7 @@ struct ReviewingView: View {
             .onChange(of: viewModel.transcriptSegments.map(\.speakerLabel)) { _, labels in
                 for label in labels {
                     let trimmed = label.trimmingCharacters(in: .whitespaces)
-                    guard !trimmed.isEmpty, !trimmed.hasPrefix("Speaker_") else { continue }
+                    guard !trimmed.isEmpty, !trimmed.hasPrefix("Speaker_"), trimmed != "?" else { continue }
                     addAttendeeFromLabel(trimmed)
                 }
             }
@@ -350,7 +363,7 @@ struct ReviewingView: View {
 
     private func addAttendeeFromLabel(_ name: String) {
         let trimmed = name.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else { return }
+        guard !trimmed.isEmpty, trimmed != "?" else { return }
         let current = attendeesString
         var list = current.isEmpty ? [] : current.split(separator: " ").map(String.init)
         guard !list.contains(trimmed) else {

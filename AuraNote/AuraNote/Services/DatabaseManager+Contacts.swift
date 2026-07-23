@@ -214,8 +214,8 @@ extension DatabaseManager {
         return nil
     }
 
-    /// 自动为 Speaker 创建或更新通讯录联系人并存入声纹特征向量
     func saveOrUpdateSpeakerContact(speakerId: String, name: String, embedding: [Float]) throws {
+        guard !speakerId.hasPrefix("Speaker_"), speakerId != "?", speakerId != "Speaker_1", !embedding.isEmpty else { return }
         let contact = Contact(
             id: speakerId,
             name: name,

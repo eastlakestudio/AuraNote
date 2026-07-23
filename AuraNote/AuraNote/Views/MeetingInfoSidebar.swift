@@ -30,7 +30,7 @@ struct MeetingInfoSidebar: View {
 
     private var speakerStats: [(speaker: String, count: Int, duration: Double)] {
         var stats = [String: (count: Int, duration: Double)]()
-        for segment in viewModel.transcriptSegments.filter({ $0.isFinal }) {
+        for segment in viewModel.transcriptSegments.filter({ $0.isFinal && !$0.speakerLabel.isEmpty && $0.speakerLabel != "?" }) {
             let current = stats[segment.speakerLabel] ?? (0, 0.0)
             let segDur = max(0, segment.endTime - segment.startTime)
             stats[segment.speakerLabel] = (current.0 + 1, current.1 + segDur)
@@ -40,7 +40,7 @@ struct MeetingInfoSidebar: View {
         }
         // 按每个 speaker 首次发言时间升序排列
         var firstTimes = [String: Double]()
-        for segment in viewModel.transcriptSegments.filter({ $0.isFinal && !$0.speakerLabel.isEmpty }) {
+        for segment in viewModel.transcriptSegments.filter({ $0.isFinal && !$0.speakerLabel.isEmpty && $0.speakerLabel != "?" }) {
             let label = segment.speakerLabel
             firstTimes[label] = min(firstTimes[label] ?? Double.greatestFiniteMagnitude, segment.startTime)
         }
@@ -246,6 +246,7 @@ struct MeetingInfoSidebar: View {
     }
 
     private func addAttendeeByName(_ name: String) {
+        guard !name.isEmpty, name != "?" else { return }
         var list = editedAttendeesList
         if !list.contains(name) { list.append(name) }
         saveMetadata(updatedAttendees: list.joined(separator: " "))
@@ -333,7 +334,7 @@ struct MeetingInfoSidebar: View {
         if let updated = updatedAttendees {
             let before = Set(attendeesString.split(separator: " ").map(String.init))
             let after = Set(updated.split(separator: " ").map(String.init))
-            for name in after.subtracting(before) where databaseManager.fetchContact(byName: name) == nil {
+            for name in after.subtracting(before) where !name.isEmpty && name != "?" && databaseManager.fetchContact(byName: name) == nil {
                 try? databaseManager.saveContact(Contact.create(name: name))
             }
         }

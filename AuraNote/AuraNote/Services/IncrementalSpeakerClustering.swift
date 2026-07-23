@@ -26,7 +26,10 @@ actor IncrementalSpeakerClustering {
     // MARK: - Public
 
     /// 加入一个声纹向量，返回对应的 speakerId
-    func addEmbedding(_ embedding: [Float]) -> String {
+    /// - Parameters:
+    ///   - embedding: 192/512维声纹向量
+    ///   - duration: 该向量对应音频切片的时间长度（秒），默认 1.6s
+    func addEmbedding(_ embedding: [Float], duration: Double = 1.6) -> String {
         embeddingCount += 1
 
         // 查找距离最近的已有聚类（余弦距离越小越相似）
@@ -41,20 +44,24 @@ actor IncrementalSpeakerClustering {
         }
 
         if bestDist < mergeDistanceThreshold, bestIndex >= 0 {
-            // 合并到已有聚类：仅在高自信度 (dist < 0.35) 时更新质心，防止边缘交界声音污染主质心致男女声混淆
-            var cluster = clusters[bestIndex]
+            // 归入已有聚类
+            let cluster = clusters[bestIndex]
             let newCount = cluster.count + 1
-            if bestDist < 0.35 {
+            
+            // 只有当距离不至于在危险边缘 (bestDist < mergeDistanceThreshold * 0.85) 且切片较稳定 (duration >= 1.0) 时才更新质心；
+            // 临界模糊或短切片仅仅归入标签，绝不污染质心向量
+            let driftLimit = mergeDistanceThreshold * 0.85
+            if bestDist < driftLimit && duration >= 1.0 {
                 var newCentroid = cluster.centroid
                 for i in 0..<newCentroid.count {
                     newCentroid[i] = (cluster.centroid[i] * Float(cluster.count) + embedding[i]) / Float(newCount)
                 }
                 clusters[bestIndex] = (id: cluster.id, centroid: newCentroid, count: newCount)
+                AppLog.info("[Clustering] #\(embeddingCount) merged → \(cluster.id) (dist=\(String(format: "%.4f", bestDist)), clusterSize=\(newCount), totalClusters=\(clusters.count), centroid=Updated)")
             } else {
                 clusters[bestIndex] = (id: cluster.id, centroid: cluster.centroid, count: newCount)
+                AppLog.info("[Clustering] #\(embeddingCount) merged → \(cluster.id) (dist=\(String(format: "%.4f", bestDist)), clusterSize=\(newCount), totalClusters=\(clusters.count), centroid=Frozen(driftProtection))")
             }
-
-            AppLog.info("[Clustering] #\(embeddingCount) merged → \(cluster.id) (dist=\(String(format: "%.4f", bestDist)), clusterSize=\(newCount), totalClusters=\(clusters.count))")
             return cluster.id
         } else {
             // 新建聚类

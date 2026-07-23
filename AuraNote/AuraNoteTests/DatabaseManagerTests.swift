@@ -97,12 +97,19 @@ final class DatabaseManagerTests: XCTestCase {
 
     func testSaveOrUpdateSpeakerContact() throws {
         let db = DatabaseManager()
-        let spkId = "Speaker_Test_99"
+        
+        // 1. 测试裸 Speaker_ 开头的标签应被拦截不存入通讯录
+        let nakedSpkId = "Speaker_Test_99"
         let emb: [Float] = [0.1, 0.5, 0.9]
+        try db.saveOrUpdateSpeakerContact(speakerId: nakedSpkId, name: nakedSpkId, embedding: emb)
+        let contacts1 = db.fetchContactsWithEmbeddings()
+        XCTAssertFalse(contacts1.contains { $0.id == nakedSpkId })
 
-        try db.saveOrUpdateSpeakerContact(speakerId: spkId, name: spkId, embedding: emb)
-
-        let contactsWithEmb = db.fetchContactsWithEmbeddings()
-        XCTAssertTrue(contactsWithEmb.contains { $0.id == spkId && $0.embedding.count == 3 })
+        // 2. 测试带会议 ID 前缀的临时说话人可以正常存入通讯录
+        let tempSpkId = "M101_Speaker_A"
+        let tempName = "周报会议_Speaker_A"
+        try db.saveOrUpdateSpeakerContact(speakerId: tempSpkId, name: tempName, embedding: emb)
+        let contacts2 = db.fetchContactsWithEmbeddings()
+        XCTAssertTrue(contacts2.contains { $0.id == tempSpkId && $0.name == tempName && $0.embedding.count == 3 })
     }
 }

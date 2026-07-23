@@ -111,7 +111,7 @@ extension Meeting {
 struct SpeechClip: Identifiable, Codable, Hashable {
     let id: String
     let meetingId: String
-    var speakerLabel: String       // Speaker_1, Speaker_2 ...
+    var speakerLabel: String       // Speaker_A, Speaker_B ... 或 '?' (尚未声纹提取/占位)
     var contactId: String?         // 绑定后的联系人 ID
     var startTime: Double          // 秒
     var endTime: Double            // 秒

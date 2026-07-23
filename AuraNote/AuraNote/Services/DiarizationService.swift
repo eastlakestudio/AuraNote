@@ -180,13 +180,19 @@ actor DiarizationService {
         return output.segments
     }
 
-    /// 旧版声纹分离（sherpa-onnx 内置聚类），保留作为回退方案
+    /// URL 入参重载（从磁盘读取采样数据转接）
     func diarizeWithEmbeddings(audioURL: URL, onProgress: ((Float) -> Void)? = nil) async throws -> DiarizationOutput {
+        let samples = try await loadAudioSamples(audioURL)
+        return try await diarizeWithEmbeddings(samples: samples, audioURL: audioURL, onProgress: onProgress)
+    }
+
+    /// 离线高精声纹分离（sherpa-onnx 内置 Pyannote 3.0 切片 + 0.90 FastClustering HAC 聚类）
+    func diarizeWithEmbeddings(samples: [Float], audioURL: URL? = nil, onProgress: ((Float) -> Void)? = nil) async throws -> DiarizationOutput {
         let startTime = Date()
-        AppLog.info("[DiarService] sherpa-onnx diarization start: audio=\(audioURL.lastPathComponent)")
+        let name = audioURL?.lastPathComponent ?? "in-memory-buffer"
+        AppLog.info("[DiarService] sherpa-onnx (pyannote 3.0 + HAC 0.90) diarization start: audio=\(name)")
 
         let d = try getDiarizer()
-        let samples = try await loadAudioSamples(audioURL)
         let audioDuration = Double(samples.count) / 16000.0
         AppLog.info("[DiarService] audio loaded: \(samples.count) samples @ 16kHz, duration=\(String(format: "%.1f", audioDuration))s")
 
@@ -353,7 +359,7 @@ actor DiarizationService {
             do {
                 let emb = try ex.extractEmbedding(samples: segSamples, sampleRate: 16000)
                 // 即时聚类：每提取一个 embedding 就归入聚类，无需等全部完成
-                let label = await clustering.addEmbedding(emb)
+                let label = await clustering.addEmbedding(emb, duration: segDuration)
                 speakerEmbeddingLists[label, default: []].append(emb)
 
                 AppLog.info("[DiarService] VAD Segment #\(i + 1)/\(vadSegments.count) [\(String(format: "%.2f", seg.start))s - \(String(format: "%.2f", seg.end))s] (dur: \(String(format: "%.2f", segDuration))s) -> assigned to \(label)")
@@ -424,7 +430,7 @@ actor DiarizationService {
     /// 基于振幅的能量 VAD 切段，与实时录音共用同一阈值体系。
     /// 扫描全部采样，按 silenceThreshold + pauseWindow 检测语音边界。
     /// 时间复杂度 O(n)，11 分钟音频约 0.01 秒完成。
-    private func energyVADSegments(samples: [Float]) -> [(start: Double, end: Double)] {
+    func energyVADSegments(samples: [Float]) -> [(start: Double, end: Double)] {
         let s = SettingsManager.shared
         let silenceThreshold: Float = s.silenceThreshold      // 0.02
         let pauseWindow: Double = s.pauseWindow                 // 1.0s
@@ -616,32 +622,42 @@ actor DiarizationService {
 
             var subSegments: [(label: String, start: Double, end: Double)] = []
 
-            if chunkDuration <= windowSec {
-                let winSamples = Self.prepareSamplesWithContext(allSamples: samples, startSec: chunkStart, endSec: chunkEnd)
-                do {
-                    let emb = try extractor.extractEmbedding(samples: winSamples, sampleRate: 16000)
-                    let label = await clustering.addEmbedding(emb)
-                    speakerEmbeddingLists[label, default: []].append(emb)
-                    subSegments.append((label: label, start: chunkStart, end: chunkEnd))
-                } catch {
-                    AppLog.warn("[DiarService] embedding extraction failed for chunk #\(processedChunkCount): \(error)")
-                    skippedCount += chunk.subBoundaries.count
-                    return
+            for subBoundary in chunk.subBoundaries {
+                let subStart = subBoundary.start
+                let subEnd = subBoundary.end
+                let subDuration = subEnd - subStart
+
+                let sIdx = Int(subStart * 16000)
+                let eIdx = min(Int(subEnd * 16000), samples.count)
+                guard sIdx < eIdx, subDuration >= 0.3 else {
+                    continue
                 }
-            } else {
-                var currStart = chunkStart
-                while currStart < chunkEnd {
-                    let currEnd = min(currStart + windowSec, chunkEnd)
-                    if (currEnd - currStart) >= 0.3 {
-                        let winSamples = Self.prepareSamplesWithContext(allSamples: samples, startSec: currStart, endSec: currEnd)
-                        if let emb = try? extractor.extractEmbedding(samples: winSamples, sampleRate: 16000) {
-                            let label = await clustering.addEmbedding(emb)
-                            speakerEmbeddingLists[label, default: []].append(emb)
-                            subSegments.append((label: label, start: currStart, end: currEnd))
-                        }
+
+                if subDuration <= windowSec {
+                    let winSamples = Self.prepareSamplesWithContext(allSamples: samples, startSec: subStart, endSec: subEnd)
+                    do {
+                        let emb = try extractor.extractEmbedding(samples: winSamples, sampleRate: 16000)
+                        let label = await clustering.addEmbedding(emb, duration: subDuration)
+                        speakerEmbeddingLists[label, default: []].append(emb)
+                        subSegments.append((label: label, start: subStart, end: subEnd))
+                    } catch {
+                        AppLog.warn("[DiarService] embedding extraction failed for subBoundary [\(subStart)-\(subEnd)]: \(error)")
                     }
-                    if currEnd >= chunkEnd { break }
-                    currStart += stepSec
+                } else {
+                    var currStart = subStart
+                    while currStart < subEnd {
+                        let currEnd = min(currStart + windowSec, subEnd)
+                        if (currEnd - currStart) >= 0.3 {
+                            let winSamples = Self.prepareSamplesWithContext(allSamples: samples, startSec: currStart, endSec: currEnd)
+                            if let emb = try? extractor.extractEmbedding(samples: winSamples, sampleRate: 16000) {
+                                let label = await clustering.addEmbedding(emb, duration: currEnd - currStart)
+                                speakerEmbeddingLists[label, default: []].append(emb)
+                                subSegments.append((label: label, start: currStart, end: currEnd))
+                            }
+                        }
+                        if currEnd >= subEnd { break }
+                        currStart += stepSec
+                    }
                 }
             }
 
@@ -717,8 +733,8 @@ actor DiarizationService {
 
         switch boundarySource {
         case .array(let boundaries):
-            let chunks = Self.groupBoundaries(boundaries, maxCount: 10, maxDuration: 20.0)
-            AppLog.info("[DiarService] Grouped \(boundaries.count) boundaries into \(chunks.count) chunks (max 10 segs / 20s)")
+            let chunks = Self.groupBoundaries(boundaries, maxCount: 4, maxDuration: 8.0)
+            AppLog.info("[DiarService] Grouped \(boundaries.count) boundaries into \(chunks.count) chunks (max 4 segs / 8s)")
             for chunk in chunks {
                 await processChunk(chunk)
             }
@@ -734,7 +750,7 @@ actor DiarizationService {
                 let newEnd = namedBoundary.end
                 let proposedDuration = newEnd - firstStart
 
-                if currentBuffer.count >= 10 || proposedDuration >= 20.0 {
+                if currentBuffer.count >= 4 || proposedDuration >= 8.0 {
                     let chunk = VADChunk(
                         chunkStart: firstStart,
                         chunkEnd: currentBuffer.last!.end,
@@ -822,6 +838,59 @@ actor DiarizationService {
             return nil
         }
     }
+    
+    /// [Hybrid Diarization 专用]
+    /// 针对一整段连续音频（通常为外层能量 VAD 切割出的大段），内部使用极端严格的 Neural VAD (threshold=0.1) 提取纯净子片段。
+    /// 针对每一个子片段 (>0.3s) 独立提取 eres2net 高精声纹。
+    func extractHybridSegments(from samples: [Float]) async -> [(start: Double, end: Double, embedding: [Float])] {
+        let segPath = segmentationModelPath()
+        let embPath = embeddingModelPath()
+        
+        guard FileManager.default.fileExists(atPath: segPath),
+              FileManager.default.fileExists(atPath: embPath) else {
+            return []
+        }
+        
+        do {
+            // 内部配置：极度严格聚类，只求完美切割
+            var config = SherpaDiarizationConfig()
+            config.segmentationModel = segPath
+            config.embeddingModel = embPath
+            config.clustering.numClusters = -1
+            config.clustering.threshold = 0.1
+            config.minDurationOn = 0.5
+            config.minDurationOff = 0.5
+            
+            let tempDiarizer = SherpaOnnxDiarizer()
+            try tempDiarizer.create(config: config)
+            
+            // 提取 Neural VAD 片段
+            let processResult = try tempDiarizer.process(samples: samples)
+            let segments = processResult.segments
+            
+            let ex = try getEmbeddingExtractor()
+            
+            var result: [(start: Double, end: Double, embedding: [Float])] = []
+            let totalSamples = samples.count
+            
+            for seg in segments {
+                let startSample = Int(seg.start * 16000)
+                let endSample = min(Int(seg.end * 16000), totalSamples)
+                guard startSample < endSample else { continue }
+                let duration = seg.end - seg.start
+                if duration < 0.3 { continue } // 过滤过短无意义片段
+                
+                let subSamples = Array(samples[startSample..<endSample])
+                if let emb = try? ex.extractEmbedding(samples: subSamples) {
+                    result.append((start: Double(seg.start), end: Double(seg.end), embedding: emb))
+                }
+            }
+            return result
+        } catch {
+            AppLog.warn("[DiarService] extractHybridSegments failed: \(error)")
+            return []
+        }
+    }
 
     // MARK: - Matching (unchanged)
 
@@ -906,7 +975,7 @@ actor DiarizationService {
 
         var newStartIdx = max(0, startIdx - halfNeeded)
         let remainingNeeded = targetCount - (endIdx - newStartIdx)
-        var newEndIdx = min(allSamples.count, endIdx + remainingNeeded)
+        let newEndIdx = min(allSamples.count, endIdx + remainingNeeded)
 
         if newEndIdx - newStartIdx < targetCount {
             let leftCompensation = targetCount - (newEndIdx - newStartIdx)
@@ -928,8 +997,8 @@ actor DiarizationService {
     /// 将有序的 VAD 边界列表按“最多 maxCount 段”且“最大累计时长 maxDuration 秒”打包成 Chunk 数组
     static func groupBoundaries(
         _ boundaries: [(start: Double, end: Double)],
-        maxCount: Int = 10,
-        maxDuration: Double = 20.0
+        maxCount: Int = 15,
+        maxDuration: Double = 30.0
     ) -> [VADChunk] {
         guard !boundaries.isEmpty else { return [] }
 
@@ -975,7 +1044,7 @@ actor DiarizationService {
         segStart: Double,
         segEnd: Double,
         speakerIntervals: [DiarizedSegment],
-        fallbackSpeaker: String = "Speaker_1"
+        fallbackSpeaker: String = "?"
     ) -> String {
         var maxOverlap: Double = 0
         var bestSpeaker: String?

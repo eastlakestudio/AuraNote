@@ -76,4 +76,26 @@ final class DiarizationServiceTests: XCTestCase {
         let targetCount = Int(1.6 * Double(sampleRate))
         XCTAssertEqual(result.count, targetCount)
     }
+
+    func testSubBoundaryOverlapAssignment() {
+        // 验证多个相互独立的子句段能够在有静音间隙的情况下精准由 assignSpeakerByOverlap 归属各自声纹
+        let subIntervals = [
+            DiarizedSegment(speakerId: "Speaker_S1", startTime: 1.0, endTime: 2.2),
+            DiarizedSegment(speakerId: "Speaker_S2", startTime: 5.0, endTime: 6.5)
+        ]
+
+        // 切割点 1：落在第一段内，不应受到中间静音 [2.2, 5.0] 污染
+        let spk1 = DiarizationService.assignSpeakerByOverlap(
+            segStart: 1.0, segEnd: 2.2,
+            speakerIntervals: subIntervals
+        )
+        XCTAssertEqual(spk1, "Speaker_S1")
+
+        // 切割点 2：落在第二段内
+        let spk2 = DiarizationService.assignSpeakerByOverlap(
+            segStart: 5.0, segEnd: 6.5,
+            speakerIntervals: subIntervals
+        )
+        XCTAssertEqual(spk2, "Speaker_S2")
+    }
 }

@@ -69,19 +69,24 @@ actor WhisperService {
         // 设置段发现回调：转写过程中持续输出中间结果
         var callbackCount = 0
         if let onSegments = onSegments {
-            pipe.segmentDiscoveryCallback = { whisperSegments in
+            pipe.segmentDiscoveryCallback = { [weak self] whisperSegments in
+                guard let self = self else { return }
                 callbackCount += 1
                 // 每 20 次回调记录一次进度
                 if callbackCount % 20 == 0 {
                     AppLog.info("WhisperKit segmentDiscovery callback #\(callbackCount): \(whisperSegments.count) new segments, lastTime=\(whisperSegments.last?.end ?? 0)s")
                 }
-                let mapped = whisperSegments.map { seg in
-                    TranscriptSegment(
+                let mapped = whisperSegments.compactMap { seg -> TranscriptSegment? in
+                    let simplifiedText = seg.text.toSimplifiedChinese()
+                    guard self.isValidSpeechSegment(text: simplifiedText) else {
+                        return nil
+                    }
+                    return TranscriptSegment(
                         id: "\(meetingId)_\(seg.id)",
                         startTime: Double(seg.start),
                         endTime: Double(seg.end),
-                        text: seg.text.toSimplifiedChinese(),
-                        speakerLabel: "Speaker_1",
+                        text: simplifiedText,
+                        speakerLabel: "?",
                         isFinal: true
                     )
                 }
@@ -110,22 +115,8 @@ actor WhisperService {
 
         if let result = results.first {
             for (index, segment) in result.segments.enumerated() {
-                let text = segment.text
-                let trimmedText = text.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
-                guard !trimmedText.isEmpty else {
-                    continue
-                }
-                
-                // 过滤常见的 Whisper 幻觉文本（模型行为过滤，非 UI 文本，无需国际化）
-                let lower = trimmedText.lowercased()
-                let hallucinations = ["字幕", "j chong", "amara.org", "感谢观看", "请不吝赐教", "不发音", "无声"]
-                if hallucinations.contains(where: { lower.contains($0) }) {
-                    continue
-                }
-                
-                // 检测循环重复幻觉：同一词组出现超过 8 次即为异常
-                if isRepetitiveHallucination(trimmedText) {
-                    AppLog.info("Discarded repetitive hallucination segment")
+                let simplifiedText = segment.text.toSimplifiedChinese()
+                guard isValidSpeechSegment(text: simplifiedText) else {
                     continue
                 }
                 
@@ -133,8 +124,8 @@ actor WhisperService {
                     id: "\(meetingId)_\(segment.id)",
                     startTime: Double(segment.start),
                     endTime: Double(segment.end),
-                    text: segment.text.toSimplifiedChinese(),
-                    speakerLabel: "Speaker_1", // Whisper 不支持声纹分离，默认统一标签
+                    text: simplifiedText,
+                    speakerLabel: "?", // Whisper 刚识别出文字尚未做声纹特征提取，统一设为 '?'
                     isFinal: true
                 )
                 parsedSegments.append(parsedSegment)
@@ -169,15 +160,25 @@ actor WhisperService {
         
         // 直接使用 result.text，避免 segments 可能为空的情况
         let fullText = result.text.trimmingCharacters(in: .whitespacesAndNewlines).toSimplifiedChinese()
-        
-        // 过滤幻觉（模型行为过滤，非 UI 文本，无需国际化）
-        let lower = fullText.lowercased()
-        let hallucinations = ["字幕", "j chong", "amara.org", "感谢观看", "请不吝赐教", "不发音", "无声"]
-        if hallucinations.contains(where: { lower.contains($0) }) {
+        guard isValidSpeechSegment(text: fullText) else {
             return ""
         }
-        
         return fullText
+    }
+    
+    /// 校验转写文本是否为有效语音（非空、非常见幻觉或重复循环词）
+    nonisolated func isValidSpeechSegment(text: String) -> Bool {
+        let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedText.isEmpty else { return false }
+        let lower = trimmedText.lowercased()
+        let hallucinations = ["字幕", "j chong", "amara.org", "感谢观看", "请不吝赐教", "不发音", "无声"]
+        if hallucinations.contains(where: { lower.contains($0) }) {
+            return false
+        }
+        if isRepetitiveHallucination(trimmedText) {
+            return false
+        }
+        return true
     }
     
     /// 检测循环重复幻觉：分词后统计最频繁词组，超过阈值则判定为异常

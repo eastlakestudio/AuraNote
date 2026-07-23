@@ -38,6 +38,7 @@ struct UnifiedTranscriptEditor: View {
     private let speakerColors: [Color] = [.purple, .blue, .orange, .green, .pink, .teal, .indigo, .mint, .cyan, .brown, .yellow]
 
     private func colorForSpeaker(_ name: String) -> Color {
+        if name == "?" { return .gray }
         guard let idx = allSpeakers.firstIndex(of: name) else { return .gray }
         return speakerColors[idx % speakerColors.count]
     }

@@ -55,19 +55,36 @@ struct DebugLogView: View {
     }
 
     private func loadLog() {
-        let logURL = Self.logFileURL
-        if let data = try? Data(contentsOf: logURL),
-           let text = String(data: data, encoding: .utf8) {
-            log = text
-        } else {
-            log = ""
+        Task.detached(priority: .userInitiated) {
+            let logURL = Self.logFileURL
+            guard let data = try? Data(contentsOf: logURL),
+                  let text = String(data: data, encoding: .utf8) else {
+                await MainActor.run { self.log = "" }
+                return
+            }
+            // 截取后 500 行进行主线程文本渲染，防止巨型文件卡死 SwiftUI
+            let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
+            let tailLines = lines.suffix(500)
+            let tailText = tailLines.joined(separator: "\n")
+            
+            await MainActor.run {
+                self.log = tailText
+            }
         }
     }
 
     private func copyLog() {
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(log, forType: .string)
+        Task.detached(priority: .userInitiated) {
+            let logURL = Self.logFileURL
+            if let data = try? Data(contentsOf: logURL),
+               let text = String(data: data, encoding: .utf8) {
+                await MainActor.run {
+                    let pasteboard = NSPasteboard.general
+                    pasteboard.clearContents()
+                    pasteboard.setString(text, forType: .string)
+                }
+            }
+        }
     }
 
     private func clearLog() {

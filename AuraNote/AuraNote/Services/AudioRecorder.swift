@@ -35,6 +35,11 @@ final class AudioRecorder {
     private var pauseTimer: Timer?                  // 静默计时器，触发后切割片段
     private var incrementalClustering = IncrementalSpeakerClustering()  // 增量声纹聚类（同会议未知说话人自动关联）
 
+    // 30 秒连续 VAD 攒批声纹提取队列
+    private var pendingVoiceprintChunks: [AudioChunk] = []
+    private var pendingVoiceprintDuration: Double = 0.0
+    private let voiceprintBatchLock = NSLock()
+
     init() {}
 
     // MARK: - 权限请求
@@ -74,6 +79,10 @@ final class AudioRecorder {
         currentMeetingId = meetingId
         pauseTimer?.invalidate()
         pauseTimer = nil
+        voiceprintBatchLock.withLock {
+            pendingVoiceprintChunks = []
+            pendingVoiceprintDuration = 0.0
+        }
         Task { await incrementalClustering.reset() }
         
         let s = SettingsManager.shared
@@ -169,6 +178,28 @@ final class AudioRecorder {
 
         isRecording = false
         currentAmplitude = 0
+
+        // 刷出剩余末尾未满 30 秒的声纹批次
+        var finalBatch: [AudioChunk]?
+        var finalDuration: Double = 0.0
+        voiceprintBatchLock.withLock {
+            if !pendingVoiceprintChunks.isEmpty {
+                finalBatch = pendingVoiceprintChunks
+                finalDuration = pendingVoiceprintDuration
+                pendingVoiceprintChunks = []
+                pendingVoiceprintDuration = 0.0
+            }
+        }
+        if let batch = finalBatch {
+            Task { [weak self] in
+                await self?.processVoiceprintBatch(batch, batchDuration: finalDuration)
+                let _ = await self?.incrementalClustering.mergeSimilarClusters(threshold: SettingsManager.shared.clusterMergeDistance)
+            }
+        } else {
+            Task { [weak self] in
+                let _ = await self?.incrementalClustering.mergeSimilarClusters(threshold: SettingsManager.shared.clusterMergeDistance)
+            }
+        }
 
         #if os(iOS)
         try? AVAudioSession.sharedInstance().setActive(false)
@@ -309,11 +340,9 @@ final class AudioRecorder {
                 self.audioChunks[idx].isTranscribing = false
             }
 
-            // 并行提取声纹 + 匹配联系人（有实质文本才跑声纹）
+            // 投递入 30 秒连续 VAD 攒批队列，提取稳定高精度声纹
             if trimmed.isEmpty { return }
-            Task { [weak self] in
-                await self?.matchSpeakerForChunk(chunk)
-            }
+            enqueueChunkForVoiceprintBatch(chunk)
         } catch {
             AppLog.warn("Transcribe chunk \(chunk.id) failed: \(error.localizedDescription)")
             await MainActor.run {
@@ -350,7 +379,155 @@ final class AudioRecorder {
         return false
     }
 
-    /// 为已转写的片段提取声纹并匹配已知联系人
+    /// 将转写完成的片段存入 30 秒攒批池，当攒满 30 秒连续 VAD 语音时批量提取高精声纹
+    private func enqueueChunkForVoiceprintBatch(_ chunk: AudioChunk) {
+        var batchToProcess: [AudioChunk]?
+        var totalDuration: Double = 0.0
+        
+        voiceprintBatchLock.withLock {
+            pendingVoiceprintChunks.append(chunk)
+            let dur = max(0.5, chunk.endTime - chunk.startTime)
+            pendingVoiceprintDuration += dur
+            
+            // 攒满 8 秒连续 VAD 语音（或不少于 4 个句段）触发一次高精声纹提取，实现全覆盖与秒级响应
+            if pendingVoiceprintDuration >= 8.0 || pendingVoiceprintChunks.count >= 4 {
+                batchToProcess = pendingVoiceprintChunks
+                totalDuration = pendingVoiceprintDuration
+                pendingVoiceprintChunks = []
+                pendingVoiceprintDuration = 0.0
+            }
+        }
+        
+        if let batch = batchToProcess {
+            Task { [weak self] in
+                await self?.processVoiceprintBatch(batch, batchDuration: totalDuration)
+            }
+        }
+    }
+
+    /// 批量处理 30 秒连续 VAD 音频切片，提取高清晰度 192D ERes2Net 声纹并更新所有子切片
+    private func processVoiceprintBatch(_ batch: [AudioChunk], batchDuration: Double) async {
+        guard !batch.isEmpty else { return }
+        
+        var combinedSamples: [Float] = []
+        var chunkSampleOffsets: [(chunkId: String, startSec: Double, endSec: Double)] = []
+        var currentSampleOffset = 0
+        
+        for chunk in batch {
+            let startSec = Double(currentSampleOffset) / 16000.0
+            combinedSamples.append(contentsOf: chunk.audioSamples)
+            currentSampleOffset += chunk.audioSamples.count
+            let endSec = Double(currentSampleOffset) / 16000.0
+            chunkSampleOffsets.append((chunkId: chunk.id, startSec: startSec, endSec: endSec))
+        }
+        guard !combinedSamples.isEmpty else { return }
+        
+        AppLog.info("[AudioRecorder] Voiceprint Hybrid Batch start: count=\(batch.count), dur=\(String(format: "%.1f", batchDuration))s, totalSamples=\(combinedSamples.count)")
+        
+        // 1. 调用混合链路进行精细分离
+        let hybridSegments = await DiarizationService.shared.extractHybridSegments(from: combinedSamples)
+        if hybridSegments.isEmpty {
+            AppLog.warn("[AudioRecorder] Voiceprint batch hybrid extraction returned empty")
+            return
+        }
+        
+        let contacts = await contactsProvider?() ?? []
+        var matchedContactIds: Set<String> = []
+        
+        // 2. 将精细子片段分配标签
+        var labeledSubSegments: [(start: Double, end: Double, label: String, embedding: [Float])] = []
+        
+        for sub in hybridSegments {
+            var assignedLabel: String
+            if !contacts.isEmpty, let match = DiarizationService.matchSingleEmbedding(
+                sub.embedding, against: contacts,
+                threshold: SettingsManager.shared.liveMatchingThreshold
+            ) {
+                assignedLabel = match.contactName
+                matchedContactIds.insert(match.contactId)
+            } else {
+                let duration = sub.end - sub.start
+                assignedLabel = await incrementalClustering.addEmbedding(sub.embedding, duration: duration)
+            }
+            
+            labeledSubSegments.append((
+                start: sub.start, 
+                end: sub.end, 
+                label: assignedLabel, 
+                embedding: sub.embedding
+            ))
+        }
+        
+        // 2.5 同说话人重叠片段合并去重 (防止底层多轨识别带来的双倍计分)
+        var mergedLabeledSegments: [(start: Double, end: Double, label: String, embedding: [Float])] = []
+        let groupedByLabel = Dictionary(grouping: labeledSubSegments, by: { $0.label })
+        
+        for (label, group) in groupedByLabel {
+            let sorted = group.sorted { $0.start < $1.start }
+            var currentMerged: [(start: Double, end: Double, label: String, embedding: [Float])] = []
+            
+            for seg in sorted {
+                if let last = currentMerged.last, seg.start <= last.end + 0.1 {
+                    currentMerged[currentMerged.count - 1] = (
+                        start: last.start,
+                        end: max(last.end, seg.end),
+                        label: label,
+                        embedding: last.embedding
+                    )
+                } else {
+                    currentMerged.append(seg)
+                }
+            }
+            mergedLabeledSegments.append(contentsOf: currentMerged)
+        }
+        mergedLabeledSegments.sort { $0.start < $1.start }
+        
+        // 3. 时间重叠分配逻辑 (Overlap Matching) 寻找主导说话人
+        var chunkUpdates: [String: (label: String, embedding: [Float])] = [:]
+        
+        for offset in chunkSampleOffsets {
+            var speakerDurations: [String: Double] = [:]
+            var bestEmbedding: [Float]? = nil
+            
+            for sub in mergedLabeledSegments {
+                let overlapStart = max(offset.startSec, sub.start)
+                let overlapEnd = min(offset.endSec, sub.end)
+                if overlapStart < overlapEnd {
+                    let overlapDuration = overlapEnd - overlapStart
+                    speakerDurations[sub.label, default: 0.0] += overlapDuration
+                    if bestEmbedding == nil || speakerDurations[sub.label]! == speakerDurations.values.max() {
+                        bestEmbedding = sub.embedding
+                    }
+                }
+            }
+            
+            if let dominantSpeaker = speakerDurations.max(by: { $0.value < $1.value })?.key {
+                chunkUpdates[offset.chunkId] = (label: dominantSpeaker, embedding: bestEmbedding ?? [])
+            } else {
+                // 若无任何重叠，退化为取最长的子片段兜底
+                if let longestSub = mergedLabeledSegments.max(by: { ($0.end - $0.start) < ($1.end - $1.start) }) {
+                    chunkUpdates[offset.chunkId] = (label: longestSub.label, embedding: longestSub.embedding)
+                }
+            }
+        }
+        
+        // 4. 应用回 UI 层
+        await MainActor.run {
+            for i in 0..<self.audioChunks.count {
+                let chunkId = self.audioChunks[i].id
+                if let update = chunkUpdates[chunkId] {
+                    self.audioChunks[i].speakerLabel = update.label
+                    self.audioChunks[i].embedding = update.embedding
+                }
+            }
+        }
+        
+        for contactId in matchedContactIds {
+            onSpeakerMatched?(contactId, "KnownContact") 
+        }
+    }
+
+    /// 为已转写的片段提取声纹并匹配已知联系人（单切片回退方法）
     private func matchSpeakerForChunk(_ chunk: AudioChunk) async {
         guard let provider = contactsProvider else {
             AppLog.info("Voiceprint matching: contactsProvider not set")
