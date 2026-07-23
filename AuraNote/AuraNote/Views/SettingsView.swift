@@ -640,7 +640,6 @@ struct SettingsView: View {
     @State private var downloadTask: Task<Void, Never>? = nil
     @State private var downloadStateVersion = 0
     @State private var showRedownloadAlert = false
-    @State private var showSherpaOnnxTest = false
 
     private let labelWidth: CGFloat = 85
 
@@ -769,39 +768,7 @@ struct SettingsView: View {
                         .background(RoundedRectangle(cornerRadius: 12).fill(.background.opacity(0.4)))
                         .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.primary.opacity(0.08), lineWidth: 1))
 
-                        // Card 2: sherpa-onnx 声纹分离测试
-                        VStack(alignment: .leading, spacing: 12) {
-                            HStack {
-                                Label("sherpa-onnx 测试", systemImage: "waveform.path.ecg")
-                                    .font(.headline)
-                                    .foregroundStyle(.blue)
-                                Spacer()
-                                Button {
-                                    showSherpaOnnxTest = true
-                                } label: {
-                                    HStack(spacing: 4) {
-                                        Image(systemName: "play.circle")
-                                        Text("打开测试")
-                                    }
-                                    .font(.caption)
-                                    .fontWeight(.medium)
-                                    .padding(.horizontal, 10)
-                                    .padding(.vertical, 4)
-                                    .background(Color.blue.opacity(0.12))
-                                    .foregroundStyle(.blue)
-                                    .cornerRadius(6)
-                                }
-                                .buttonStyle(.plain)
-                            }
-                            Text("使用 sherpa-onnx (ONNX Runtime) 进行离线声纹分离测试")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        .padding(20)
-                        .background(RoundedRectangle(cornerRadius: 12).fill(.background.opacity(0.4)))
-                        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.primary.opacity(0.08), lineWidth: 1))
-
-                        // Card 3: 算法参数配置
+                        // Card 2: 算法参数配置
                         algoParamsCard
                     }
                     .padding(.horizontal, 24)
@@ -837,9 +804,6 @@ struct SettingsView: View {
             Button(loc("redownload_confirm_ok"), role: .destructive) { downloadModel() }
         } message: {
             Text(loc("redownload_confirm_msg"))
-        }
-        .sheet(isPresented: $showSherpaOnnxTest) {
-            SherpaOnnxTestView()
         }
     }
 
@@ -1004,16 +968,16 @@ struct SettingsView: View {
         settings.noiseGate = 0.002
         settings.targetPeak = 0.7
         settings.baseGain = 1.5
-        settings.clusteringThreshold = 0.90
-        settings.incrementalClusteringDistance = 0.28
-        settings.clusterMergeDistance = 0.30
+        settings.clusteringThreshold = 0.71
+        settings.incrementalClusteringDistance = 0.45
+        settings.clusterMergeDistance = 0.45
         settings.minDurationOn = 0.5
         settings.minDurationOff = 0.5
-        settings.matchingThreshold = 0.70
-        settings.highConfidenceThreshold = 0.75
-        settings.liveMatchingThreshold = 0.70
+        settings.matchingThreshold = 0.63
+        settings.highConfidenceThreshold = 0.655
+        settings.liveMatchingThreshold = 0.58
         settings.consumerPollInterval = 0.3
-        settings.maxChunkDuration = 8.0
+        settings.maxChunkDuration = 20.0
     }
 
     // MARK: - Helpers (Model)

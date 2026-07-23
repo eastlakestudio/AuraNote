@@ -30,7 +30,6 @@
 		5D41639D60B5E4C5E1172A62 /* IncrementalSpeakerClustering.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72D8E245A507FD55C69C590E /* IncrementalSpeakerClustering.swift */; };
 		6E167BEFD2C233B745EFABF8 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA05E8D9E26C0B88038E4DE1 /* Models.swift */; };
 		73CDF1BC899A1F3A94FF31BF /* DebugLogView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E78634C95E29732F47DA32B /* DebugLogView.swift */; };
-		8405940A9543AFCB197B7BF7 /* SherpaOnnxTestView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF13293AD6AD3F6F2A3D41E0 /* SherpaOnnxTestView.swift */; };
 		8C198B945AD17FB1B24C6932 /* DatabaseManagerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47CA492447BF5B777FA56256 /* DatabaseManagerTests.swift */; };
 		939492EA7DD0D3214276E090 /* DatabaseManager+SpeechClip.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4DFAC15A617A930DC5A42B2C /* DatabaseManager+SpeechClip.swift */; };
 		9B3EC7ADEF3EE5927BEC17C8 /* SpeakerMatcherTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4479231F82FFD1F4DB64092 /* SpeakerMatcherTests.swift */; };
@@ -91,7 +90,6 @@
 		952B04F23E5B9716D14D7DCB /* MeetingListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingListView.swift; sourceTree = "<group>"; };
 		9BFD42D5406878F197B6D168 /* SettingsManagerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsManagerTests.swift; sourceTree = "<group>"; };
 		A98FD31FA2CD50211ACAC2CC /* DiarizationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiarizationService.swift; sourceTree = "<group>"; };
-		AF13293AD6AD3F6F2A3D41E0 /* SherpaOnnxTestView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SherpaOnnxTestView.swift; sourceTree = "<group>"; };
 		B4479231F82FFD1F4DB64092 /* SpeakerMatcherTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeakerMatcherTests.swift; sourceTree = "<group>"; };
 		BA05E8D9E26C0B88038E4DE1 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		C8073FA324A101785C53399A /* RecordingViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingViewModel.swift; sourceTree = "<group>"; };
@@ -196,7 +194,6 @@
 				394E5061EAE6DBB0A06E9D26 /* RecordingView.swift */,
 				5407127495AA20185E7E659F /* ReviewingView.swift */,
 				5B5BCF96CE20B1279DF702CC /* SettingsView.swift */,
-				AF13293AD6AD3F6F2A3D41E0 /* SherpaOnnxTestView.swift */,
 				513A7CD37B3AFB757108CA04 /* UnifiedTranscriptEditor.swift */,
 			);
 			path = Views;
@@ -390,7 +387,6 @@
 				05E191AAEB8679916CB2005C /* SettingsManager.swift in Sources */,
 				0EEA1082C872870722CA261F /* SettingsView.swift in Sources */,
 				E1F0DA09B0BFC8A3FD19F1AD /* SherpaOnnxDiarizer.swift in Sources */,
-				8405940A9543AFCB197B7BF7 /* SherpaOnnxTestView.swift in Sources */,
 				51730AE847AECCB61F19C328 /* SpeakerAlignmentService.swift in Sources */,
 				14304976F061C285CBAD0D70 /* SpeakerMatcher.swift in Sources */,
 				2B83CB8ACA069A7053BCDD8A /* UnifiedTranscriptEditor.swift in Sources */,
@@ -523,7 +519,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 4;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = J4RT98GF7B;
 				ENABLE_NS_ASSERTIONS = NO;
@@ -538,7 +534,7 @@
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 1.1.0;
+				MARKETING_VERSION = 1.1.2;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -583,7 +579,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 4;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = J4RT98GF7B;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -604,7 +600,7 @@
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 1.1.0;
+				MARKETING_VERSION = 1.1.2;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;

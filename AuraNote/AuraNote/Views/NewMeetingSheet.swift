@@ -42,15 +42,37 @@ struct NewMeetingSheet: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         
-                        Picker("", selection: $viewModel.formSpeechLang) {
-                            Text(loc("chinese")).tag("zh")
-                            Text("English").tag("en")
+                        HStack(spacing: 12) {
+                            Button {
+                                viewModel.formSpeechLang = "zh"
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Image(systemName: viewModel.formSpeechLang == "zh" ? "largecircle.fill.circle" : "circle")
+                                        .foregroundStyle(viewModel.formSpeechLang == "zh" ? .purple : .secondary)
+                                    Text(loc("chinese"))
+                                        .font(.subheadline)
+                                }
+                                .frame(width: 100, alignment: .leading)
+                            }
+                            .buttonStyle(.plain)
+                            .contentShape(Rectangle())
+                            
+                            Button {
+                                viewModel.formSpeechLang = "en"
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Image(systemName: viewModel.formSpeechLang == "en" ? "largecircle.fill.circle" : "circle")
+                                        .foregroundStyle(viewModel.formSpeechLang == "en" ? .purple : .secondary)
+                                    Text("English")
+                                        .font(.subheadline)
+                                }
+                                .frame(width: 100, alignment: .leading)
+                            }
+                            .buttonStyle(.plain)
+                            .contentShape(Rectangle())
                         }
-                        .pickerStyle(.segmented)
-                        .labelsHidden()
-                        .frame(maxWidth: 220)
-                        .padding(.vertical, 2)
                     }
+                    .frame(maxWidth: 220, alignment: .leading)
                     
                     VStack(alignment: .leading, spacing: 6) {
                         Text(loc("meeting_topic"))
@@ -197,7 +219,7 @@ struct NewMeetingSheet: View {
                           .font(.caption)
                           .foregroundStyle(.secondary)
                       
-                      HStack(spacing: 16) {
+                      HStack(alignment: .center, spacing: 16) {
                           HStack(spacing: 12) {
                               // 实时录音 RadioButton
                               Button {
@@ -209,6 +231,7 @@ struct NewMeetingSheet: View {
                                       Text(loc("live_recording"))
                                           .font(.subheadline)
                                   }
+                                  .frame(width: 100, alignment: .leading)
                               }
                               .buttonStyle(.plain)
                               .contentShape(Rectangle())
@@ -223,46 +246,41 @@ struct NewMeetingSheet: View {
                                       Text(loc("audio_file"))
                                           .font(.subheadline)
                                   }
+                                  .frame(width: 100, alignment: .leading)
                               }
                               .buttonStyle(.plain)
                               .contentShape(Rectangle())
                           }
                           .frame(maxWidth: 220, alignment: .leading)
                           
-                          // 如果选择音频文件，展示文件名框 and 选择按钮
-                          if viewModel.recordingMode == .importFile {
-                              HStack(spacing: 8) {
-                                  // 文件名称框
-                                  Text(originalAudioFileName.isEmpty ? loc("no_audio_selected") : originalAudioFileName)
-                                      .font(.subheadline)
-                                      .foregroundStyle(originalAudioFileName.isEmpty ? .secondary : .primary)
-                                      .lineLimit(1)
-                                      .padding(.horizontal, 10)
-                                      .padding(.vertical, 6)
-                                      .frame(maxWidth: .infinity, alignment: .leading)
-                                      .background(.quaternary.opacity(0.4))
+                          // 文件选择区始终占位，切换模式时不改变高度
+                          HStack(spacing: 8) {
+                              Text(originalAudioFileName.isEmpty ? loc("no_audio_selected") : originalAudioFileName)
+                                  .font(.subheadline)
+                                  .foregroundStyle(originalAudioFileName.isEmpty ? .secondary : .primary)
+                                  .lineLimit(1)
+                                  .padding(.horizontal, 10)
+                                  .padding(.vertical, 6)
+                                  .frame(maxWidth: .infinity, alignment: .leading)
+                                  .background(.quaternary.opacity(0.4))
+                                  .clipShape(RoundedRectangle(cornerRadius: 6))
+                              
+                              Button {
+                                  selectAudioFile()
+                              } label: {
+                                  Image(systemName: "folder.badge.plus")
+                                      .font(.title3)
+                                      .foregroundStyle(.purple)
+                                      .padding(6)
+                                      .background(.purple.opacity(0.1))
                                       .clipShape(RoundedRectangle(cornerRadius: 6))
-                                  
-                                  // 选择文件图标按钮
-                                  Button {
-                                      selectAudioFile()
-                                  } label: {
-                                      Image(systemName: "folder.badge.plus")
-                                          .font(.title3)
-                                          .foregroundStyle(.purple)
-                                          .padding(6)
-                                          .background(.purple.opacity(0.1))
-                                          .clipShape(RoundedRectangle(cornerRadius: 6))
-                                  }
-                                  .buttonStyle(.plain)
-                                  .help(loc("select_audio_file"))
                               }
-                              .transition(.opacity)
-                          } else {
-                              Spacer()
+                              .buttonStyle(.plain)
+                              .help(loc("select_audio_file"))
                           }
+                          .opacity(viewModel.recordingMode == .importFile ? 1 : 0)
+                          .disabled(viewModel.recordingMode != .importFile)
                       }
-                      .frame(height: 32)
                       
                   }
 

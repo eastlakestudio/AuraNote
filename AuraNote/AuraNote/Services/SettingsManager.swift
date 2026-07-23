@@ -56,16 +56,16 @@ final class SettingsManager {
     var baseGain: Float = 1.5 {
         didSet { defaults.set(baseGain, forKey: "algo_base_gain") }
     }
-    /// 声纹聚类距离阈值（sherpa-onnx FastClustering，余弦距离 0~2）：越低越细分，说话人越多。默认 0.90
-    var clusteringThreshold: Double = 0.90 {
+    /// 声纹聚类距离阈值（sherpa-onnx FastClustering，余弦距离 0~2）：越低越细分，说话人越多。默认 0.71
+    var clusteringThreshold: Double = 0.71 {
         didSet { defaults.set(clusteringThreshold, forKey: "sherpa_cluster_dist") }
     }
-    /// 增量聚类距离阈值（逐段，余弦距离 0~2）：0.70
-    var incrementalClusteringDistance: Float = 0.70 {
+    /// 增量聚类距离阈值（逐段，余弦距离 0~2）：0.45
+    var incrementalClusteringDistance: Float = 0.45 {
         didSet { defaults.set(incrementalClusteringDistance, forKey: "algo_incremental_cluster_dist") }
     }
-    /// 聚类级合并距离阈值（簇质心互比，余弦距离 0~2）：0.70
-    var clusterMergeDistance: Float = 0.70 {
+    /// 聚类级合并距离阈值（簇质心互比，余弦距离 0~2）：0.45
+    var clusterMergeDistance: Float = 0.45 {
         didSet { defaults.set(clusterMergeDistance, forKey: "algo_cluster_merge_dist") }
     }
     /// 最短语音段（秒），sherpa-onnx diarization。范围 0.1~2.0
@@ -77,15 +77,15 @@ final class SettingsManager {
         didSet { defaults.set(minDurationOff, forKey: "sherpa_min_duration_off") }
     }
     /// 声纹匹配基础阈值（余弦相似度最低分）。范围 0.3~0.9
-    var matchingThreshold: Float = 0.55 {
+    var matchingThreshold: Float = 0.63 {
         didSet { defaults.set(matchingThreshold, forKey: "algo_matching_threshold") }
     }
     /// 声纹匹配高置信度阈值，高于此值自动绑定。范围 0.5~0.95
-    var highConfidenceThreshold: Float = 0.65 {
+    var highConfidenceThreshold: Float = 0.655 {
         didSet { defaults.set(highConfidenceThreshold, forKey: "algo_high_confidence_threshold") }
     }
     /// 实时录音声纹匹配阈值（与离线共用同一管线，默认同 matchingThreshold）。范围 0.3~0.8
-    var liveMatchingThreshold: Float = 0.55 {
+    var liveMatchingThreshold: Float = 0.58 {
         didSet { defaults.set(liveMatchingThreshold, forKey: "algo_live_matching_threshold") }
     }
     /// 离线转写消费者轮询间隔（秒）。范围 0.1~1.0
@@ -93,7 +93,7 @@ final class SettingsManager {
         didSet { defaults.set(consumerPollInterval, forKey: "algo_consumer_poll_interval") }
     }
     /// 实时录音单段最大时长（秒），超过强制切分。范围 3.0~20.0
-    var maxChunkDuration: Double = 8.0 {
+    var maxChunkDuration: Double = 20.0 {
         didSet { defaults.set(maxChunkDuration, forKey: "algo_max_chunk_duration") }
     }
     
@@ -225,21 +225,21 @@ final class SettingsManager {
         targetPeak = d.object(forKey: "algo_target_peak") as? Float ?? 0.7
         maxGain = d.object(forKey: "algo_max_gain") as? Float ?? 10.0
         baseGain = d.object(forKey: "algo_base_gain") as? Float ?? 1.5
-        clusteringThreshold = d.object(forKey: "sherpa_cluster_dist") as? Double ?? 0.90
+        clusteringThreshold = d.object(forKey: "sherpa_cluster_dist") as? Double ?? 0.71
         let savedIncr = d.object(forKey: "algo_incremental_cluster_dist") as? Float
         incrementalClusteringDistance = (savedIncr == 0.36 || savedIncr == 0.28 || savedIncr == nil) ? 0.45 : savedIncr!
         let savedMerge = d.object(forKey: "algo_cluster_merge_dist") as? Float
-        clusterMergeDistance = (savedMerge == 0.38 || savedMerge == 0.50 || savedMerge == 0.30 || savedMerge == nil) ? 0.50 : savedMerge!
+        clusterMergeDistance = (savedMerge == 0.38 || savedMerge == 0.50 || savedMerge == 0.30 || savedMerge == nil) ? 0.45 : savedMerge!
         minDurationOn = d.object(forKey: "sherpa_min_duration_on") as? Float ?? 0.5
         minDurationOff = d.object(forKey: "sherpa_min_duration_off") as? Float ?? 0.5
         let savedMatching = d.object(forKey: "algo_matching_threshold") as? Float
-        matchingThreshold = (savedMatching == 0.70 || savedMatching == nil) ? 0.55 : savedMatching!
+        matchingThreshold = (savedMatching == 0.70 || savedMatching == nil) ? 0.63 : savedMatching!
         let savedHighConf = d.object(forKey: "algo_high_confidence_threshold") as? Float
-        highConfidenceThreshold = (savedHighConf == 0.75 || savedHighConf == 0.55 || savedHighConf == nil) ? 0.65 : savedHighConf!
-        liveMatchingThreshold = d.object(forKey: "algo_live_matching_threshold") as? Float ?? 0.55
+        highConfidenceThreshold = (savedHighConf == 0.75 || savedHighConf == 0.55 || savedHighConf == nil) ? 0.655 : savedHighConf!
+        liveMatchingThreshold = d.object(forKey: "algo_live_matching_threshold") as? Float ?? 0.58
         AppLog.info("[Settings] clusteringThreshold=\(clusteringThreshold) incrClusterDist=\(incrementalClusteringDistance) clusterMergeDist=\(clusterMergeDistance) minOn=\(minDurationOn) minOff=\(minDurationOff) matching=\(matchingThreshold) highConf=\(highConfidenceThreshold) liveMatching=\(liveMatchingThreshold)")
         consumerPollInterval = d.object(forKey: "algo_consumer_poll_interval") as? Double ?? 0.3
-        maxChunkDuration = d.object(forKey: "algo_max_chunk_duration") as? Double ?? 8.0
+        maxChunkDuration = d.object(forKey: "algo_max_chunk_duration") as? Double ?? 20.0
         
         // 仅在首次启动时加载持久化的下载状态，后续使用内存中已有状态
         if !hasPerformedStartupSync {
