@@ -69,12 +69,15 @@ final class AudioRecorder {
             }
         }
         #else
-        micGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
-        if !micGranted {
-            // Note: on macOS, requesting permission is usually synchronous enough,
-            // but for safety we just rely on existing authorization or prompt.
-            // A more robust check could be added here.
-            micGranted = true // macOS permission fallback for simplicity if not using AVCaptureDevice properly
+        let status = AVCaptureDevice.authorizationStatus(for: .audio)
+        switch status {
+        case .authorized:
+            micGranted = true
+        case .notDetermined:
+            micGranted = await AVCaptureDevice.requestAccess(for: .audio)
+        default:
+            // .denied 或 .restricted
+            micGranted = false
         }
         #endif
         
