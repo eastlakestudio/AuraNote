@@ -17,6 +17,13 @@ enum AppLog {
 
     // MARK: - 公开 API
 
+    /// 启动时调用，清空上次运行的日志
+    static func clearLogFile() {
+        let logURL = SettingsManager.shared.dataDirectory
+            .appendingPathComponent("debug.log")
+        try? "".data(using: .utf8)?.write(to: logURL, options: .atomic)
+    }
+
     static func info(_ message: String, file: String = #file, function: String = #function) {
         log(level: .info, message: message, file: file, function: function)
     }

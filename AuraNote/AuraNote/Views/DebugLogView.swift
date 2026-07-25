@@ -55,8 +55,8 @@ struct DebugLogView: View {
     }
 
     private func loadLog() {
+        let logURL = Self.logFileURL
         Task.detached(priority: .userInitiated) {
-            let logURL = Self.logFileURL
             guard let data = try? Data(contentsOf: logURL),
                   let text = String(data: data, encoding: .utf8) else {
                 await MainActor.run { self.log = "" }
@@ -74,8 +74,8 @@ struct DebugLogView: View {
     }
 
     private func copyLog() {
+        let logURL = Self.logFileURL
         Task.detached(priority: .userInitiated) {
-            let logURL = Self.logFileURL
             if let data = try? Data(contentsOf: logURL),
                let text = String(data: data, encoding: .utf8) {
                 await MainActor.run {

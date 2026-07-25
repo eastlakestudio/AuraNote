@@ -8,6 +8,10 @@ struct SegmentFrameKey: PreferenceKey {
     }
 }
 
+class SegmentFrameCache {
+    var frames: [String: CGRect] = [:]
+}
+
 struct UnifiedTranscriptEditor: View {
     @Binding var segments: [TranscriptSegment]
     @Binding var filterSpeaker: String?
@@ -22,7 +26,7 @@ struct UnifiedTranscriptEditor: View {
     var onSpeakerChanged: ((String, String) -> Void)?
     var onTextChanged: ((String, String) -> Void)?
 
-    @State private var segmentFrames: [String: CGRect] = [:]
+    @State private var frameCache = SegmentFrameCache()
     @State private var scrollViewHeight: CGFloat = 0
 
     private var attendeeList: [String] {
@@ -130,7 +134,7 @@ struct UnifiedTranscriptEditor: View {
                             .onChange(of: geo.size.height) { _, h in scrollViewHeight = h }
                     }
                 )
-                .onPreferenceChange(SegmentFrameKey.self) { segmentFrames = $0 }
+                .onPreferenceChange(SegmentFrameKey.self) { frameCache.frames = $0 }
                 .onChange(of: activeSegmentId) { _, newId in
                     guard let id = newId else { return }
                     // 底色先切换（即时生效，通过 isActive 绑定）
@@ -139,7 +143,7 @@ struct UnifiedTranscriptEditor: View {
                         let em: CGFloat = 18
                         let threshold: CGFloat = 6 * em
                         let shouldScroll: Bool
-                        if let frame = segmentFrames[id], scrollViewHeight > 0 {
+                        if let frame = frameCache.frames[id], scrollViewHeight > 0 {
                             // 仅当段在可视区底部 6em 内或已滚出顶部时才触发滚动
                             shouldScroll = frame.minY > scrollViewHeight - threshold || frame.minY < -threshold
                         } else {
@@ -212,8 +216,10 @@ struct TranscriptRow: View {
     @State private var showRenamePopover = false
     @State private var newSpeakerName = ""
     @State private var skipNextNewlineCheck = false
+    @State private var isEditing = false          // 编辑模式开关（与 FocusState 分离，避免 LazyVStack 中 focus 失效）
+    @FocusState private var isTextFieldFocused: Bool
+    @State private var textHeight: CGFloat = 20
     @State private var isHovered = false
-    @State private var textEditorHeight: CGFloat = 44
     @State private var flashOpacity: Double = 0
 
     private var isSearchMatch: Bool {
@@ -237,21 +243,21 @@ struct TranscriptRow: View {
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            // 第一行：序号 + 播放 + 时间 + 说话人 + 时长 + 合并
+            // 第一行：序号 + 播放 + 时间范围 + 说话人 + 合并
             HStack(spacing: 6) {
-                Text("#\(index)")
+                Text(String(format: "#%04d", index))
                     .font(.system(.caption, design: .monospaced, weight: .bold))
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 1)
                     .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 4))
-
+            
                 Button(action: { onPlay?() }) {
                     Image(systemName: "play.circle.fill").font(.caption).foregroundStyle(.blue)
                 }.buttonStyle(.plain).help(loc("play"))
-
-                Text(formatTime(segment.startTime))
-                    .font(.system(.caption, design: .monospaced)).foregroundStyle(.tertiary)
+            
+                Text(segment.formattedTimeRange)
+                    .font(.system(.caption, design: .monospaced)).foregroundStyle(.secondary)
 
                 Menu {
                     let otherAttendees = attendees.filter { $0 != segment.speakerLabel }
@@ -288,27 +294,39 @@ struct TranscriptRow: View {
                     }.padding().frame(width: 200)
                 }
 
-                let dur = max(0, segment.endTime - segment.startTime)
-                Text(formatDuration(dur))
-                    .font(.system(.caption, design: .monospaced)).foregroundStyle(.tertiary)
-
                 Spacer()
 
-                if !isFirst {
-                    Button(action: onMergeUp) {
-                        Image(systemName: "arrow.up").font(.system(size: 9, weight: .bold)).foregroundStyle(.orange.opacity(0.7))
-                    }.buttonStyle(.plain).help(loc("merge"))
+                if isHovered {
+                    HStack(spacing: 12) {
+                        if !isEditing {
+                            Button(action: { enterEditMode() }) {
+                                Image(systemName: "pencil").font(.system(size: 11, weight: .bold)).foregroundStyle(.blue.opacity(0.7))
+                            }.buttonStyle(.plain).help("编辑")
+                        } else {
+                            Button(action: { commitEdit() }) {
+                                Image(systemName: "checkmark").font(.system(size: 11, weight: .bold)).foregroundStyle(.green.opacity(0.8))
+                            }.buttonStyle(.plain).help("完成编辑")
+                        }
+                        
+                        if !isFirst {
+                            Button(action: onMergeUp) {
+                                Image(systemName: "arrow.up").font(.system(size: 10, weight: .bold)).foregroundStyle(.orange.opacity(0.7))
+                            }.buttonStyle(.plain).help(loc("merge"))
+                        }
+                    }
+                } else {
+                    // 占位，避免由于按钮出现/消失导致布局闪烁
+                    Color.clear.frame(width: 40, height: 16)
                 }
             }
-            .padding(.trailing, 16)  // 留出垂直滚动条空间，防止合并按钮被遮挡
+            .padding(.trailing, 16)
 
-            // 第二行：文本（左对齐说话人标签位置）
+            // 第二行：文本（左对齐说话人标签位置，右对齐到合并按钮左侧）
             HStack(alignment: .top, spacing: 0) {
                 Spacer().frame(width: 32)  // # 序号标签宽度
                 Spacer().frame(width: 22)  // ▶ 按钮宽度
-                Spacer().frame(width: 42)  // 时间戳宽度
+                Spacer().frame(width: 42)  // 开始时间宽度
                 if segment.isPlaceholder {
-                    // 占位段：等待离线转写
                     HStack(spacing: 6) {
                         ProgressView().scaleEffect(0.6)
                         Text(loc("transcribing_placeholder"))
@@ -319,35 +337,64 @@ struct TranscriptRow: View {
                 } else if isSearchMatch && !searchQuery.isEmpty {
                     highlightedTextView
                 } else {
-                    TextEditor(text: $editText)
-                        .font(.body)
-                        .lineSpacing(6)
-                        .scrollContentBackground(.hidden)
-                        .scrollIndicators(.never)
-                        .frame(minHeight: 22, idealHeight: textEditorHeight, maxHeight: textEditorHeight)
-                    .onChange(of: editText) { _, newValue in
-                        recalcEditorHeight(newValue)
-                        if skipNextNewlineCheck { skipNextNewlineCheck = false; return }
-                        if newValue.contains("\n") {
-                            let parts = newValue.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false).map(String.init)
-                            editText = parts[safe: 0] ?? ""
-                            onSplitAfter(parts[safe: 1] ?? "")
-                        } else { onTextChange(newValue) }
+                    if !isEditing {
+                        Text(editText.isEmpty ? " " : editText)
+                            .font(.body)
+                            .lineSpacing(6)
+                            .padding(.vertical, 2)
+                            .textSelection(.enabled)
+                    } else {
+                        TextField("", text: $editText, axis: .vertical)
+                            .textFieldStyle(.plain)
+                            .font(.body)
+                            .lineSpacing(6)
+                            .lineLimit(1...100)
+                            .focused($isTextFieldFocused)
+                            .padding(.vertical, 2)
+                            .onSubmit { commitEdit() }
                     }
                 }
+                Spacer().frame(width: 28)  // 留出合并按钮区域空间
             }
         }
         .padding(.horizontal, 8).padding(.vertical, 4)
+        .onChange(of: editText) { _, newValue in
+            // When typing, if a newline is entered, split the segment
+            if isEditing {
+                if skipNextNewlineCheck { skipNextNewlineCheck = false; return }
+                if newValue.contains("\n") {
+                    let parts = newValue.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false).map(String.init)
+                    editText = parts[safe: 0] ?? ""
+                    onSplitAfter(parts[safe: 1] ?? "")
+                    isEditing = false
+                    isTextFieldFocused = false
+                }
+            }
+        }
+        .contextMenu {
+            Button {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(segment.text, forType: .string)
+            } label: {
+                Label(loc("copy"), systemImage: "doc.on.doc")
+            }
+            .keyboardShortcut("c", modifiers: [])
+        }
         .background(
-            isActive ? Color.purple.opacity(0.12) :
-            flashOpacity > 0 ? Color.yellow.opacity(flashOpacity) :
-            isSearchMatch ? Color.purple.opacity(0.10) :
-            isHovered ? Color.blue.opacity(0.06) : Color.clear
+            Group {
+                if isEditing { Color.blue.opacity(0.12) }
+                else if isActive { Color.purple.opacity(0.18) }
+                else if flashOpacity > 0 { Color.yellow.opacity(flashOpacity) }
+                else if isSearchMatch { Color.purple.opacity(0.15) }
+                else if isHovered { Color.blue.opacity(0.08) }
+                else { Color.clear }
+            }
         )
         .overlay(alignment: .leading) {
             Group {
-                if isActive { Rectangle().fill(Color.purple.opacity(0.3)).frame(width: 3) }
-                else if isHovered { Rectangle().fill(Color.blue.opacity(0.2)).frame(width: 3) }
+                if isEditing { Rectangle().fill(Color.blue.opacity(0.5)).frame(width: 3) }
+                else if isActive { Rectangle().fill(Color.purple.opacity(0.6)).frame(width: 3) }
+                else if isHovered { Rectangle().fill(Color.blue.opacity(0.3)).frame(width: 3) }
             }
         }
         .onHover { h in withAnimation(.easeInOut(duration: 0.1)) { isHovered = h } }
@@ -355,7 +402,7 @@ struct TranscriptRow: View {
         .onChange(of: flashSegmentId) { _, newId in
             if newId == segment.id { triggerFlash() }
         }
-        .onAppear { recalcEditorHeight(editText) }
+        .onAppear { }
     }
     private func formatTime(_ t: Double) -> String {
         let m = Int(t)/60, s = Int(t)%60; return String(format: "%02d:%02d", m, s)
@@ -380,30 +427,27 @@ struct TranscriptRow: View {
         if m > 0 { return String(format: loc("duration_min_sec"), m, s) }
         return String(format: loc("duration_sec_only"), s)
     }
-    /// 根据文本内容计算 TextEditor 需要的动态高度
-    private func recalcEditorHeight(_ text: String) {
-        let font = NSFont.preferredFont(forTextStyle: .body)
-        let paragraphStyle = NSMutableParagraphStyle()
-        paragraphStyle.lineSpacing = 6
-        let attrs: [NSAttributedString.Key: Any] = [
-            .font: font,
-            .paragraphStyle: paragraphStyle
-        ]
-        // 估算可用宽度：假设行宽约 600pt（总宽 - 左侧留白 - 右侧padding）
-        let estimatedWidth: CGFloat = 600
-        let attrStr = NSAttributedString(string: text, attributes: attrs)
-        let rect = attrStr.boundingRect(
-            with: CGSize(width: estimatedWidth, height: .greatestFiniteMagnitude),
-            options: [.usesLineFragmentOrigin, .usesFontLeading]
-        )
-        let newHeight = max(22, ceil(rect.height) + 10)
-        if abs(newHeight - textEditorHeight) > 1 {
-            textEditorHeight = newHeight
-        }
-    }
     private func confirmRename() {
         let name = newSpeakerName.trimmingCharacters(in: .whitespaces)
         if !name.isEmpty { onSpeakerChange(name); showRenamePopover = false }
+    }
+
+    /// 进入编辑模式
+    private func enterEditMode() {
+        isEditing = true
+        // 延迟设置 focus，确保 TextField 已渲染（LazyVStack 中需等待视图更新）
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            isTextFieldFocused = true
+        }
+    }
+
+    /// 提交编辑（保存文本并退出编辑模式）
+    private func commitEdit() {
+        if editText != segment.text {
+            onTextChange(editText)
+        }
+        isEditing = false
+        isTextFieldFocused = false
     }
 
     /// 将文本按搜索匹配拆分为高亮/非高亮片段

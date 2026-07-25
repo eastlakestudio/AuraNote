@@ -8,7 +8,7 @@ import SQLite3
 @Observable
 final class DatabaseManager {
 
-    nonisolated(unsafe) internal var db: OpaquePointer?
+    @ObservationIgnored internal var db: OpaquePointer?
     private let dbPath: String
     
     internal static let dateFormatter: ISO8601DateFormatter = {
@@ -118,6 +118,7 @@ final class DatabaseManager {
             created_at TEXT DEFAULT (datetime('now')),
             updated_at TEXT DEFAULT (datetime('now')),
             attendees TEXT,
+            hotword_categories TEXT,
             FOREIGN KEY (parent_meeting_id) REFERENCES meetings(id) ON DELETE SET NULL
         );
 
@@ -155,7 +156,7 @@ final class DatabaseManager {
         """
 
         if sqlite3_exec(db, schema, nil, nil, nil) != SQLITE_OK {
-            let errmsg = String(cString: sqlite3_errmsg(db)!)
+            let _ = String(cString: sqlite3_errmsg(db)!)
             // Failed to create tables: errmsg
         } else {
             
@@ -174,6 +175,20 @@ final class DatabaseManager {
             }
             if !hasAttendees {
                 sqlite3_exec(db, "ALTER TABLE meetings ADD COLUMN attendees TEXT;", nil, nil, nil)
+            }
+            
+            // 增量检查 meetings 表的热词字段
+            var hasHotwordCategories = false
+            if sqlite3_prepare_v2(db, checkColumnSql, -1, &checkStmt, nil) == SQLITE_OK {
+                while sqlite3_step(checkStmt) == SQLITE_ROW {
+                    if let name = columnOptionalText(checkStmt, index: 1) {
+                        if name == "hotword_categories" { hasHotwordCategories = true }
+                    }
+                }
+                sqlite3_finalize(checkStmt)
+            }
+            if !hasHotwordCategories {
+                sqlite3_exec(db, "ALTER TABLE meetings ADD COLUMN hotword_categories TEXT;", nil, nil, nil)
             }
 
             // 增量检查 contacts 表的 role / company 字段
@@ -240,8 +255,8 @@ final class DatabaseManager {
 
     func createMeeting(_ meeting: Meeting) throws {
         let sql = """
-        INSERT INTO meetings (id, parent_meeting_id, title, location, audio_path, duration, status, attendees, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO meetings (id, parent_meeting_id, title, location, audio_path, duration, status, attendees, hotword_categories, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
@@ -257,9 +272,10 @@ final class DatabaseManager {
         sqlite3_bind_int(stmt, 6, Int32(meeting.duration))
         sqlite3_bind_text(stmt, 7, meeting.status.rawValue.cString, -1, SQLITE_TRANSIENT)
         bindOptionalText(stmt, index: 8, value: meeting.attendees)
+        bindOptionalText(stmt, index: 9, value: meeting.hotwordCategories)
         let nowStr = Self.dateFormatter.string(from: meeting.createdAt)
-        sqlite3_bind_text(stmt, 9, nowStr.cString, -1, SQLITE_TRANSIENT)
         sqlite3_bind_text(stmt, 10, nowStr.cString, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 11, nowStr.cString, -1, SQLITE_TRANSIENT)
 
         guard sqlite3_step(stmt) == SQLITE_DONE else {
             throw DBError.executeFailed(lastError)
@@ -329,7 +345,7 @@ final class DatabaseManager {
     }
 
     func fetchAllMeetings() -> [Meeting] {
-        let sql = "SELECT id, parent_meeting_id, title, location, audio_path, duration, status, summary, created_at, updated_at, attendees FROM meetings ORDER BY created_at DESC"
+        let sql = "SELECT id, parent_meeting_id, title, location, audio_path, duration, status, summary, created_at, updated_at, attendees, hotword_categories FROM meetings ORDER BY created_at DESC"
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
             return []
@@ -350,6 +366,7 @@ final class DatabaseManager {
             let createdAtStr = columnText(stmt, index: 8)
             let updatedAtStr = columnText(stmt, index: 9)
             let attendees = columnOptionalText(stmt, index: 10)
+            let hotwordCategories = columnOptionalText(stmt, index: 11)
 
             let status = Meeting.Status(rawValue: statusStr) ?? .recording
             let createdAt = Self.parseDate(createdAtStr) ?? Date()
@@ -366,16 +383,17 @@ final class DatabaseManager {
                 summary: summary,
                 createdAt: createdAt,
                 updatedAt: updatedAt,
-                attendees: attendees
+                attendees: attendees,
+                hotwordCategories: hotwordCategories
             ))
         }
         return meetings
     }
 
-    func updateMeetingInfo(id: String, title: String, location: String?, createdAt: Date, attendees: String?, duration: Int? = nil) throws {
+    func updateMeetingInfo(id: String, title: String, location: String?, createdAt: Date, attendees: String?, hotwordCategories: String? = nil, duration: Int? = nil) throws {
         let sql = """
         UPDATE meetings 
-        SET title = ?, location = ?, created_at = ?, attendees = ?, updated_at = ?
+        SET title = ?, location = ?, created_at = ?, attendees = ?, hotword_categories = ?, updated_at = ?
         """ + (duration != nil ? ", duration = ?" : "") + """
         WHERE id = ?
         """
@@ -392,9 +410,10 @@ final class DatabaseManager {
         bindOptionalText(stmt, index: 2, value: location)
         sqlite3_bind_text(stmt, 3, dateStr.cString, -1, SQLITE_TRANSIENT)
         bindOptionalText(stmt, index: 4, value: attendees)
-        sqlite3_bind_text(stmt, 5, updatedAtStr.cString, -1, SQLITE_TRANSIENT)
+        bindOptionalText(stmt, index: 5, value: hotwordCategories)
+        sqlite3_bind_text(stmt, 6, updatedAtStr.cString, -1, SQLITE_TRANSIENT)
         
-        var nextIndex: Int32 = 6
+        var nextIndex: Int32 = 7
         if let d = duration {
             sqlite3_bind_int(stmt, nextIndex, Int32(d))
             nextIndex += 1

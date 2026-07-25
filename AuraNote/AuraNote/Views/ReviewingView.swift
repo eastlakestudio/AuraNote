@@ -30,6 +30,9 @@ struct ReviewingView: View {
     @State private var searchIndex = 0
     @FocusState private var isSearchFocused: Bool
 
+    // 语言切换
+    @State private var langRefresh = 0
+
     // 本地桥接 ViewModel 的 showSaveNewContactsAlert，确保 sheet 可靠弹出
     @State private var showSaveSheet = false
 
@@ -64,6 +67,37 @@ struct ReviewingView: View {
         let mins = total / 60
         let secs = total % 60
         return String(format: "%02d:%02d", mins, secs)
+    }
+
+    // MARK: - 语言切换
+
+    private var langButtonLabel: String {
+        switch SettingsManager.shared.langSetting {
+        case "zh-Hans": return "简体中文"
+        case "en":       return "English"
+        default:         return loc("follow_system")
+        }
+    }
+
+    private var langBadge: String {
+        switch SettingsManager.shared.langSetting {
+        case "zh-Hans": return "中"
+        case "en":       return "EN"
+        default:         return "SYS"
+        }
+    }
+
+    private func cycleLanguage() {
+        let current = SettingsManager.shared.langSetting
+        if current.isEmpty {
+            SettingsManager.shared.langSetting = "zh-Hans"
+        } else if current == "zh-Hans" {
+            SettingsManager.shared.langSetting = "en"
+        } else {
+            SettingsManager.shared.langSetting = ""
+        }
+        SettingsManager.shared.save()
+        langRefresh += 1
     }
 
     private var transcriptionPercent: Int? {
@@ -228,6 +262,19 @@ struct ReviewingView: View {
                 if showInspector {
                     Divider()
                     VStack(spacing: 0) {
+                        HStack {
+                            Spacer()
+                            Button {
+                                withAnimation { showInspector = false }
+                            } label: {
+                                Image(systemName: "sidebar.left")
+                                    .foregroundStyle(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                            .help("关闭属性面板")
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
                         MeetingInfoSidebar(viewModel: viewModel, filterSpeaker: $filterSpeaker, attendeesString: $attendeesString, showSpeakerSections: true)
                             .frame(maxHeight: .infinity)
 
@@ -266,27 +313,7 @@ struct ReviewingView: View {
                     }
                     .help(loc("debug_log"))
 #endif
-                    NavigationLink(destination: SettingsView()) {
-                        Image(systemName: "gearshape")
-                    }
-                    .frame(width: 32)
-                    .help(loc("settings"))
-
-                    NavigationLink(destination: PersonnelManagementView()) {
-                        Image(systemName: "person.2")
-                    }
-                    .frame(width: 32)
-                    .help(loc("personnel_voiceprint_help"))
-
-                    Button {
-                        withAnimation { showInspector.toggle() }
-                    } label: {
-                        Image(systemName: "sidebar.right")
-                            .foregroundStyle(showInspector ? .purple : .secondary)
-                    }
-                    .frame(width: 32)
-                    .help(loc("meeting_inspector"))
-
+                    // 搜索按钮
                     Button {
                         withAnimation { showSearch.toggle() }
                         if showSearch {
@@ -300,6 +327,71 @@ struct ReviewingView: View {
                     }
                     .frame(width: 32)
                     .help("搜索")
+
+                    // 向导/帮助（新增，不可用——向导是首页功能）
+                    Button {
+                    } label: {
+                        Image(systemName: "questionmark.circle")
+                    }
+                    .frame(width: 32, height: 32)
+                    .help(loc("wizard_help"))
+                    .disabled(true)
+                    NavigationLink(destination: SettingsView()) {
+                        Image(systemName: "gearshape")
+                    }
+                    .frame(width: 32)
+                    .help(loc("settings"))
+
+                    // 热词管理（新增）
+                    NavigationLink(destination: HotwordsManagementView()) {
+                        Image(systemName: "text.book.closed")
+                    }
+                    .frame(width: 32)
+                    .help(loc("wizard_hotwords_title"))
+
+                    NavigationLink(destination: PersonnelManagementView()) {
+                        Image(systemName: "person.2")
+                    }
+                    .frame(width: 32)
+                    .help(loc("personnel_voiceprint_help"))
+
+                    // 新建会议（新增，不可用——已在会议中）
+                    Button {
+                    } label: {
+                        Image(systemName: "plus.circle.fill")
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(width: 32)
+                    .help(loc("start_meeting"))
+                    .disabled(true)
+
+                    // 批量管理（新增，不可用——已在会议中）
+                    Button {
+                    } label: {
+                        Image(systemName: "checklist")
+                    }
+                    .frame(width: 32)
+                    .help(loc("batch_manage"))
+                    .disabled(true)
+
+                    // 语言切换（新增）
+                    Button {
+                        cycleLanguage()
+                    } label: {
+                        ZStack(alignment: .bottomTrailing) {
+                            Image(systemName: "globe")
+                                .font(.system(size: 15))
+                            Text(langBadge)
+                                .font(.system(size: 7, weight: .bold))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 2)
+                                .background(Capsule().fill(Color.accentColor))
+                                .offset(x: 4, y: 4)
+                        }
+                        .frame(width: 32, height: 32)
+                    }
+                    .buttonStyle(.plain)
+                    .help("\(loc("follow_system")) / 简体中文 / English  (当前: \(langButtonLabel))")
                 }
             }
             .onAppear {
@@ -374,7 +466,17 @@ struct ReviewingView: View {
         }
         .sheet(isPresented: $showSaveSheet) {
             SaveNewContactsSheet(viewModel: viewModel)
-                .onAppear { AppLog.info("[Exit] SaveNewContactsSheet appeared with \(viewModel.pendingNewContactsToPrompt.count) contacts") }
+        }
+        .alert(
+            "分析完成",
+            isPresented: Binding(
+                get: { viewModel.analysisCompletionMessage != nil },
+                set: { if !$0 { viewModel.analysisCompletionMessage = nil } }
+            )
+        ) {
+            Button(loc("confirm"), role: .cancel) { viewModel.analysisCompletionMessage = nil }
+        } message: {
+            Text(viewModel.analysisCompletionMessage ?? "")
         }
     }
 
@@ -468,7 +570,7 @@ struct ReviewingView: View {
                 contacts: databaseManager.fetchAllContacts().map { $0.name },
                 onPlaySegment: { seg in playSegment(seg) },
                 onSpeakerChanged: { segId, newSpeaker in
-                        // 仅更改当前这一句的发言人，不影响其他段
+                        // 若是临时发言人，则全局替换；否则仅修改当前这一句的错误归属
                         if let idx = viewModel.transcriptSegments.firstIndex(where: { $0.id == segId }) {
                             let oldLabel = viewModel.transcriptSegments[idx].speakerLabel
                             var contact = databaseManager.fetchContact(byName: newSpeaker)
@@ -476,13 +578,26 @@ struct ReviewingView: View {
                                 contact = Contact.create(name: newSpeaker)
                                 try? databaseManager.saveContact(contact!)
                             }
-                            viewModel.transcriptSegments[idx].speakerLabel = newSpeaker
-                            viewModel.transcriptSegments[idx].contactId = contact?.id
-                            try? databaseManager.updateSpeechClipContact(
-                                clipId: segId, speakerLabel: newSpeaker, contactId: contact?.id
-                            )
-                            if let cid = contact?.id {
-                                viewModel.saveEmbeddingForSpeaker(speakerLabel: oldLabel, contactId: cid)
+                            
+                            if oldLabel.hasPrefix("Speaker_") {
+                                viewModel.globalRenameSpeaker(oldName: oldLabel, newName: newSpeaker, contactId: contact?.id)
+                                // 仅在全局重命名时（旧代号不再存在），才同步切换过滤条件
+                                if filterSpeaker == oldLabel {
+                                    filterSpeaker = newSpeaker
+                                }
+                            } else {
+                                viewModel.transcriptSegments[idx].speakerLabel = newSpeaker
+                                viewModel.transcriptSegments[idx].contactId = contact?.id
+                                try? databaseManager.updateSpeechClipContact(
+                                    clipId: segId, speakerLabel: newSpeaker, contactId: contact?.id
+                                )
+                                // 实时同步到数据库
+                                if let meetingId = viewModel.currentMeeting?.id {
+                                    let segs = viewModel.transcriptSegments
+                                    Task { @MainActor in
+                                        viewModel.saveSegmentsToDatabase(meetingId: meetingId, segments: segs)
+                                    }
+                                }
                             }
                         }
                         addAttendeeFromLabel(newSpeaker)
@@ -501,6 +616,17 @@ struct ReviewingView: View {
             }
         }
         .padding()
+        .overlay {
+            Button("") {
+                if let seg = viewModel.transcriptSegments.first(where: { $0.id == activeSegmentId }) {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(seg.text, forType: .string)
+                }
+            }
+            .keyboardShortcut("c", modifiers: [.command])
+            .opacity(0.001)
+            .frame(width: 1, height: 1)
+        }
     }
 
     // MARK: - 搜索
@@ -587,9 +713,20 @@ struct ReviewingView: View {
     private var meetingSummaryCard: some View {
         VStack(alignment: .leading, spacing: 8) {
             if let meeting = viewModel.currentMeeting {
-                Text(meeting.title)
-                    .font(.title3)
-                    .fontWeight(.bold)
+                HStack {
+                    Text(meeting.title)
+                        .font(.title3)
+                        .fontWeight(.bold)
+                    Spacer()
+                    Button {
+                        withAnimation { showInspector = true }
+                    } label: {
+                        Image(systemName: "sidebar.right")
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help(loc("meeting_inspector"))
+                }
                 HStack(spacing: 16) {
                     Label(formatCreatedAt(meeting.createdAt), systemImage: "calendar")
                     if let location = meeting.location {

@@ -16,6 +16,13 @@ struct NewMeetingSheet: View {
     @State private var showDatePickerPopover = false
 
     @State private var showMultiSelectPopover = false
+    @State private var showHotwordPicker = false
+
+    /// 根据分类 ID 查找显示名称
+    private func hotwordCategoryName(for id: String) -> String {
+        if id == "__custom__" { return "自定义热词" }
+        return HotwordPresetsManager.shared.categories.first(where: { $0.id == id })?.name ?? id
+    }
 
     private var formattedFormDate: String {
         let formatter = DateFormatter()
@@ -213,6 +220,61 @@ struct NewMeetingSheet: View {
                     }
                 }
 
+                  // 3.5 行业词库
+                  VStack(alignment: .leading, spacing: 6) {
+                      Text("行业词库")
+                          .font(.caption)
+                          .foregroundStyle(.secondary)
+
+                      HStack(spacing: 8) {
+                          if viewModel.formHotwordCategories.isEmpty {
+                              Text("未选择")
+                                  .font(.subheadline)
+                                  .foregroundStyle(.secondary)
+                          } else {
+                              ScrollView(.horizontal, showsIndicators: false) {
+                                  HStack(spacing: 6) {
+                                      ForEach(Array(viewModel.formHotwordCategories).sorted(), id: \.self) { catId in
+                                          HStack(spacing: 4) {
+                                              Text(hotwordCategoryName(for: catId)).font(.caption)
+                                              Button {
+                                                  viewModel.formHotwordCategories.remove(catId)
+                                              } label: {
+                                                  Image(systemName: "xmark.circle.fill").font(.caption2)
+                                              }.buttonStyle(.plain)
+                                          }
+                                          .padding(.horizontal, 8).padding(.vertical, 4)
+                                          .background(.purple.opacity(0.1)).clipShape(Capsule())
+                                      }
+                                  }
+                              }
+                          }
+
+                          Spacer()
+
+                          Button {
+                              showHotwordPicker = true
+                          } label: {
+                              HStack(spacing: 4) {
+                                  Image(systemName: "book.pages").font(.caption)
+                                  Text("选择词库")
+                                      .font(.subheadline)
+                              }
+                              .padding(.horizontal, 10)
+                              .padding(.vertical, 6)
+                              .background(.quaternary.opacity(0.5))
+                              .clipShape(RoundedRectangle(cornerRadius: 6))
+                          }
+                          .buttonStyle(.plain)
+                          .popover(isPresented: $showHotwordPicker) {
+                              HotwordPresetPickerSheet(
+                                  selectedIds: $viewModel.formHotwordCategories,
+                                  onDismiss: { showHotwordPicker = false }
+                              )
+                          }
+                      }
+                  }
+
                   // 4. 音频来源
                   VStack(alignment: .leading, spacing: 6) {
                       Text(loc("audio_source"))
@@ -402,6 +464,13 @@ struct NewMeetingSheet: View {
                 originalAudioFileName = url.lastPathComponent
                 // 从音频元数据提取真实录制时间，立即覆盖表单日期选择器
                 viewModel.updateFormDateFromAudioFile(at: tempURL)
+                // 当会议主题为空时，自动用音频文件名 + 当前日期时间填充
+                if viewModel.formTitle.isEmpty {
+                    let baseName = url.deletingPathExtension().lastPathComponent
+                    let formatter = DateFormatter()
+                    formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+                    viewModel.formTitle = "\(baseName) \(formatter.string(from: Date()))"
+                }
             } catch {
                 AppLog.error("Failed to copy audio file to temp directory: \(error.localizedDescription)")
             }

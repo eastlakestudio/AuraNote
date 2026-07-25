@@ -16,6 +16,7 @@ final class RecordingViewModel {
     var recordingDuration: TimeInterval = 0
     var showNewMeetingSheet = false
     var errorAlert: String?
+    var analysisCompletionMessage: String?
 
     // MARK: - 新建会议表单
 
@@ -26,6 +27,7 @@ final class RecordingViewModel {
     var selectedParentMeetingId: String? = nil
     var formCreatedAt = Date()
     var formSpeechLang = UserDefaults.standard.string(forKey: "speech_language") ?? "zh"
+    var formHotwordCategories: Set<String> = []
 
     enum RecordingMode {
         case liveRecording
@@ -58,7 +60,7 @@ final class RecordingViewModel {
     var processedDiarizationDuration: Double = 0
     var totalAudioDuration: Double = 0
     private var transcriptionTask: Task<Void, Never>?
-    nonisolated(unsafe) var lastDiarEmbeddings: [String: [Float]]?
+    @ObservationIgnored nonisolated(unsafe) var lastDiarEmbeddings: [String: [Float]]?
 
     // 定时器
     private var durationTimer: Timer?
@@ -74,6 +76,9 @@ final class RecordingViewModel {
     var selectedPendingContactIds: Set<String> = []
     /// 是否显示保存新联系人确认弹窗
     var showSaveNewContactsAlert = false
+    /// 待持久化的发言人重命名（退出会议时统一写入 DB）
+    /// key=oldName, value=(newName, contactId)
+    private var pendingSpeakerRenames: [String: (newName: String, contactId: String)] = [:]
 
     init(audioRecorder: AudioRecorder, databaseManager: DatabaseManager) {
         self.audioRecorder = audioRecorder
@@ -88,12 +93,24 @@ final class RecordingViewModel {
         audioRecorder.onSpeakerMatched = { [weak self] contactId, contactName in
             self?.addAttendee(contactName)
         }
+        // 增量聚类发现新匿名说话人时实时添加为参会人
+        audioRecorder.onNewSpeakerDiscovered = { [weak self] label in
+            self?.addAttendee(label)
+        }
+        // 声纹标签更新后立即同步 audioChunks，避免等 1s 定时器
+        audioRecorder.onVoiceprintLabelsUpdated = { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.audioChunks = self.audioRecorder.audioChunks
+            }
+        }
     }
 
     // MARK: - 录音控制
 
     /// 用户点击"开始新录音"
     func onTapStartRecording() {
+        resetForm()  // 确保每次新建会议时表单为空白状态
         showNewMeetingSheet = true
     }
 
@@ -130,6 +147,7 @@ final class RecordingViewModel {
         )
         meeting.createdAt = formCreatedAt
         meeting.updatedAt = formCreatedAt
+        meeting.hotwordCategories = formHotwordCategories.isEmpty ? nil : formHotwordCategories.sorted().joined(separator: ",")
 
         do {
             try databaseManager.createMeeting(meeting)
@@ -138,18 +156,28 @@ final class RecordingViewModel {
             return
         }
 
-        // 3. 启动录音，传入上下文高频词汇（如标题、地点、参会人）
+        // 3. 准备音频路径与上下文词汇
         let audioDir = SettingsManager.shared.dataDirectory
         let audioPath = audioDir.appendingPathComponent("audio_\(meeting.id).wav")
 
+        // 组装在线识别器热词：标题 + 地点 + 参会人 + 行业词库 + 自定义热词
         var contextualWords: [String] = []
         if !formTitle.isEmpty { contextualWords.append(formTitle) }
         if !formLocation.isEmpty { contextualWords.append(formLocation) }
         if !formAttendees.isEmpty { contextualWords.append(contentsOf: formAttendees.split(separator: " ").map(String.init)) }
+        let hotwordCats = formHotwordCategories
+        let industryHws = HotwordPresetsManager.shared.getWords(for: Array(hotwordCats))
+        if !industryHws.isEmpty { contextualWords.append(industryHws) }
+        if hotwordCats.contains("__custom__") {
+            let customHws = SettingsManager.shared.hotwords.trimmingCharacters(in: .whitespaces)
+            if !customHws.isEmpty { contextualWords.append(customHws) }
+        }
+        let finalOnlineHotwords = contextualWords.joined(separator: " ")
 
-        // 3. 立即启动录音（音频直接写入文件，不因模型加载延迟而丢失）
+        // 注：FunASR 在线模型由 AudioRecorder.startRecording() 内部按需初始化
+        // 4. 启动录音（音频直接写入文件）
         do {
-            try audioRecorder.startRecording(meetingId: meeting.id, savePath: audioPath, contextualStrings: contextualWords)
+            try audioRecorder.startRecording(meetingId: meeting.id, savePath: audioPath, hotwords: finalOnlineHotwords)
         } catch {
             errorAlert = "\(loc("err_start_record_failed"))\n\(error.localizedDescription)"
             return
@@ -162,7 +190,7 @@ final class RecordingViewModel {
             AppLog.warn("Failed to save audio path meeting=\(meeting.id): \(error.localizedDescription)")
         }
 
-        // 4. 更新状态
+        // 5. 更新状态
         currentMeeting = meeting
         meetingStatus = .recording
         recordingDuration = 0
@@ -170,7 +198,7 @@ final class RecordingViewModel {
         transcriptSegments = []
         resetForm()
 
-        // 5. 启动计时器
+        // 6. 启动计时器
         let timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             guard let self = self else { return }
             Task { @MainActor in
@@ -227,7 +255,8 @@ final class RecordingViewModel {
                     endTime: chunk.endTime,
                     text: "",
                     speakerLabel: chunk.speakerLabel ?? "?",
-                    isFinal: false
+                    isFinal: false,
+                    isManualEdit: chunk.isManualEdit
                 )
             }
             return TranscriptSegment(
@@ -236,7 +265,8 @@ final class RecordingViewModel {
                 endTime: chunk.endTime,
                 text: text,
                 speakerLabel: chunk.speakerLabel ?? "?",
-                isFinal: true
+                isFinal: true,
+                isManualEdit: chunk.isManualEdit
             )
         }
 
@@ -280,7 +310,7 @@ final class RecordingViewModel {
                 AppLog.warn("Voiceprint diarization failed: meeting=\(meetingId)")
                 await MainActor.run { [weak self] in
                     self?.isTranscribingOffline = false
-                                safeUpdateStatus(id: meetingId, status: .pendingDiarization)
+                    self?.safeUpdateStatus(id: meetingId, status: .pendingDiarization)
                 }
                 return
             }
@@ -301,7 +331,7 @@ final class RecordingViewModel {
                 // 保留用户手动修改的标签
                 var customLabels: [String: (label: String, contactId: String?)] = [:]
                 for seg in currentSegments {
-                    if !seg.speakerLabel.isEmpty && !seg.speakerLabel.hasPrefix("Speaker_") && seg.speakerLabel != "?" {
+                    if seg.isManualEdit {
                         customLabels[seg.id] = (seg.speakerLabel, seg.contactId)
                     }
                 }
@@ -328,7 +358,7 @@ final class RecordingViewModel {
                 if !knownContacts.isEmpty {
                     let matchResult = SpeakerMatcher.match(embeddings: matchEmbeddings, against: knownContacts)
                     matchedSpeakerIds = matchResult.matchedSpeakerIds
-                    for (speakerId, match) in matchResult.highConfidence {
+                    for (_, match) in matchResult.highConfidence {
                         self.addAttendee(match.name)
                         // 声纹持久化延迟到退出会议时由用户确认
                     }
@@ -352,7 +382,7 @@ final class RecordingViewModel {
                 let remainingLabels = Set(aligned.map(\.speakerLabel)).filter { $0.hasPrefix("Speaker_") && !matchedSpeakerIds.contains($0) }
                 for label in remainingLabels {
                     self.addAttendee(label)
-                    let memContact = self.getOrCreateMemoryContact(for: label)
+                    let memContact = self.getOrCreateMemoryContact(for: label, embedding: matchEmbeddings[label])
                     for i in 0..<aligned.count where aligned[i].speakerLabel == label {
                         aligned[i].contactId = memContact.id
                     }
@@ -377,6 +407,8 @@ final class RecordingViewModel {
                 self.isTranscribingOffline = false
                 let allLabeled = aligned.filter { $0.isFinal }.allSatisfy { !$0.speakerLabel.isEmpty && $0.speakerLabel != "?" }
                 safeUpdateStatus(id: meetingId, status: allLabeled ? .completed : .pendingDiarization)
+                
+                self.analysisCompletionMessage = loc("diarization_complete_msg")
             }
         }
     }
@@ -468,7 +500,7 @@ final class RecordingViewModel {
         }
 
         // 消费者累积的真实段（与占位段分开管理）
-        var consumerRealSegments: [TranscriptSegment] = []
+        // var consumerRealSegments: [TranscriptSegment] = []
 
         // 消息通道：后台生产 → 前台消费
         let segmentQueue = DispatchQueue(label: "segment.q")
@@ -525,7 +557,7 @@ final class RecordingViewModel {
                             }
                         }
                         // 正确做法：使用时间轴重叠度进行对齐，而不是按索引强行映射
-                        var aligned = SpeakerAlignmentService.align(transcripts: allReal, diarization: diar)
+                        let aligned = SpeakerAlignmentService.align(transcripts: allReal, diarization: diar)
                         var finalAligned = aligned
                         if !customLabels.isEmpty {
                             finalAligned = aligned.map { seg in
@@ -574,7 +606,12 @@ final class RecordingViewModel {
                     var allReal = existingReal
                     for seg in batch where !allReal.contains(where: { $0.id == seg.id }) {
                         if !seg.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                            allReal.append(seg)
+                            var newSeg = seg
+                            if let pending = self.pendingSpeakerRenames[newSeg.speakerLabel] {
+                                newSeg.speakerLabel = pending.newName
+                                newSeg.contactId = pending.contactId
+                            }
+                            allReal.append(newSeg)
                         }
                     }
                     allReal.sort { $0.startTime < $1.startTime }
@@ -594,22 +631,35 @@ final class RecordingViewModel {
                     }
                     self.segmentCount = max(self.segmentCount, allReal.count)
                 }
+                // 基于声纹分离进度实时更新百分比（processedDiarizationDuration 由 onProgress 回调持续驱动）
+                if self.totalAudioDuration > 0 {
+                    self.offlineProgressFraction = min(self.processedDiarizationDuration / self.totalAudioDuration, 0.99)
+                }
                 // 每 10 次循环（~3秒）保存中间结果到数据库
                 saveCounter += 1
                 let realOnly = self.transcriptSegments.filter { !$0.isPlaceholder }
                 if saveCounter % 10 == 0 && !realOnly.isEmpty {
-                    self.saveSegmentsToDatabase(meetingId: meetingId)
+                    Task.detached { [weak self, meetingId, realOnly] in
+                        await self?.saveSegmentsToDatabase(meetingId: meetingId, segments: realOnly)
+                    }
                 }
                 try? await Task.sleep(nanoseconds: UInt64(SettingsManager.shared.consumerPollInterval * 1_000_000_000))
-                if !self.isTranscribingOffline { break }
+                if !self.isTranscribingOffline {
+                    // 分析已结束，清理所有残留占位段（停顿/静默区域无实际讲话内容）
+                    self.transcriptSegments = self.transcriptSegments.filter { !$0.isPlaceholder }
+                    break
+                }
             }
         }
 
-        let meetingTitlePrefix = self.currentMeeting?.title.trimmingCharacters(in: .whitespacesAndNewlines)
-        let cleanMeetingTitle = (meetingTitlePrefix?.isEmpty == false) ? meetingTitlePrefix! : "未命名会议"
+        // 提前在主线程组装热词，供离线转写后台管线使用
+        let hotwordCats = self.currentMeeting?.hotwordCategories?.components(separatedBy: ",") ?? []
+        let industryHws = HotwordPresetsManager.shared.getWords(for: hotwordCats)
+        let customHws = hotwordCats.contains("__custom__") ? SettingsManager.shared.hotwords : ""
+        let finalHotwords = [industryHws, customHws, self.currentMeeting?.attendees ?? ""].filter { !$0.isEmpty }.joined(separator: " ")
 
         // 后台生产者
-        transcriptionTask = Task.detached { [weak self, cleanMeetingTitle] in
+        transcriptionTask = Task.detached { [weak self, finalHotwords] in
             guard let self = self else { return }
             defer {
                 consumerTask.cancel()
@@ -625,217 +675,255 @@ final class RecordingViewModel {
             }
 
             do {
-                try await WhisperService.shared.initialize()
+                // 确保 FunASR 离线模型已初始化（传入热词，若热词变更会自动重建识别器）
+                if !(await FunASRService.shared.isOfflineReady) {
+                    try await FunASRService.shared.initializeOffline(hotwords: finalHotwords)
+                } else {
+                    // 即使已就绪，也传入热词以触发热词变更时的重建
+                    try await FunASRService.shared.initializeOffline(hotwords: finalHotwords)
+                }
+                // 确保 VAD 已初始化（Silero VAD）
+                if !(await FunASRService.shared.isVadReady) {
+                    try await FunASRService.shared.initializeVAD()
+                }
+                // 确保标点恢复模型已初始化
+                if SettingsManager.shared.isFunASRPunctAvailable {
+                    let punctReady = await FunASRService.shared.isPunctReady
+                    if !punctReady {
+                        try? await FunASRService.shared.initializePunctuation()
+                    }
+                }
                 try Task.checkCancellation()
 
-                let speechLang = UserDefaults.standard.string(forKey: "speech_language") ?? "zh"
-
-                // 预加载音频采样（供声纹提取复用，避免重复解码）
-                var samples = try await DiarizationService.shared.loadAudioSamples(audioURL)
-                AppLog.info("[Diar] audio preloaded: \(samples.count) samples")
-
-                // 预先拉取全量通讯录，供增量声纹比对使用
-                let referenceProfiles = await self.databaseManager.fetchAllKnownVoiceprintProfiles()
-                AppLog.info("[Diar] Pre-fetched \(referenceProfiles.count) known profiles for incremental matching")
-
-                // 弃用流式管道，改用全局高精处理长音频（如 SherpaOnnxTestView），并发执行完整的声纹分离与转写
-                async let diarTask = DiarizationService.shared.diarizeWithEmbeddings(
-                    samples: samples,
-                    audioURL: audioURL,
-                    onProgress: { progress in
-                        Task { @MainActor [weak self] in
+                // ═══ Step 1: 加载音频样本并启动交错处理管线 ═══
+                AppLog.info("[Diar+ASR] Starting interleaved hybrid diarization and transcription...")
+                
+                let samples = try await DiarizationService.shared.loadAudioSamples(audioURL)
+                let sampleRate = 16000
+                
+                nonisolated(unsafe) var collectedSegments: [TranscriptSegment] = []
+                
+                // 开启专门的异步流，让声纹分离引擎（生产者）把切好的 chunk 送给转写引擎（消费者）
+                let (chunkStream, chunkContinuation) = AsyncStream<[DiarizedSegment]>.makeStream()
+                
+                // (热词已在主线程提前组装并通过 finalHotwords 捕获)
+                
+                let transcriptionWorker = Task.detached { [meetingId, samples, sampleRate, finalHotwords] in
+                    for await chunk in chunkStream {
+                        _ = try? await FunASRService.shared.transcribeDiarizedSegments(
+                            samples: samples,
+                            sampleRate: sampleRate,
+                            diarSegments: chunk,
+                            meetingId: meetingId,
+                            hotwords: finalHotwords,
+                            onSegment: { segment in
+                                collectedSegments.append(segment)
+                                // 实时推送到前端展示队列
+                                segmentQueue.sync { pendingChunks.append([segment]) }
+                            }
+                        )
+                    }
+                }
+                
+                var diarOutput: DiarizationOutput?
+                do {
+                    diarOutput = try await DiarizationService.shared.diarizeWithEmbeddings(
+                        samples: samples,
+                        audioURL: audioURL,
+                        onProgress: { [weak self] progress in
+                            Task { @MainActor [weak self] in
+                                self?.processedDiarizationDuration = Double(progress) * (self?.totalAudioDuration ?? 0)
+                            }
+                        },
+                        onIncrementalResult: { [weak self] _, embeddings in
                             guard let self = self else { return }
-                            // 进度以声纹分离 onProgress 为准，进度值 0.0~1.0
-                            // progress 本身单调递增（diarization processedDuration 只增不减）
-                            let newFraction = Double(progress)
-                            self.offlineProgressFraction = max(self.offlineProgressFraction, newFraction)
-                            if self.totalAudioDuration > 0 {
-                                self.processedDiarizationDuration = self.offlineProgressFraction * self.totalAudioDuration
+                            await MainActor.run {
+                                let knownContacts = self.databaseManager.fetchContactsWithEmbeddings()
+                                let matchResult = SpeakerMatcher.match(embeddings: embeddings, against: knownContacts)
+                                var autoMap: [String: (name: String, contactId: String)] = [:]
+                                for (speakerId, match) in matchResult.highConfidence {
+                                    autoMap[speakerId] = (name: match.name, contactId: match.contactId)
+                                }
+                                if !autoMap.isEmpty {
+                                    var changed = false
+                                    for i in 0..<self.transcriptSegments.count {
+                                        if let match = autoMap[self.transcriptSegments[i].speakerLabel] {
+                                            self.transcriptSegments[i].speakerLabel = match.name
+                                            self.transcriptSegments[i].contactId = match.contactId
+                                            changed = true
+                                        }
+                                    }
+                                    if changed {
+                                        // 添加参会人
+                                        for name in autoMap.values.map(\.name) {
+                                            self.addAttendee(name)
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        onChunkDiarized: { segments in
+                            // 边分离边把新产生的带说话人标签的短句交给 ASR 转写
+                            chunkContinuation.yield(segments)
+                        }
+                    )
+                    
+                    chunkContinuation.finish()
+                    _ = await transcriptionWorker.value // 等待所有已生成的 chunk 转写完毕
+                    
+                    let speakerCount = Set(diarOutput?.segments.map(\.speakerId) ?? []).count
+                    AppLog.info("[Diar] Hybrid diarization complete: \(diarOutput?.segments.count ?? 0) diar segments, \(speakerCount) speakers")
+                    if let output = diarOutput {
+                        await sharedState.setDiarization(output.segments, embeddings: output.embeddings)
+                    }
+                } catch {
+                    AppLog.warn("[Diar] Diarization failed: \(error.localizedDescription)")
+                    chunkContinuation.finish()
+                    
+                    // 降级：如果声纹分离失败或为空，走全局 VAD-Accum 粗转写
+                    _ = try await FunASRService.shared.transcribeVadAccumulated(
+                        audioURL: audioURL,
+                        meetingId: meetingId,
+                        hotwords: finalHotwords,
+                        onSegment: { segment in
+                            collectedSegments.append(segment)
+                            // 实时推送到前端展示队列
+                            segmentQueue.sync { pendingChunks.append([segment]) }
+                        }
+                    )
+                }
+                
+                var uniqueSegments: [String: TranscriptSegment] = [:]
+                for seg in collectedSegments {
+                    uniqueSegments[seg.id] = seg
+                }
+                let finalSegments = uniqueSegments.values
+                    .filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                    .sorted { $0.startTime < $1.startTime }
+                AppLog.info("[FunASR] Transcription complete: \(finalSegments.count) sentences generated")
+
+                try Task.checkCancellation()
+
+                let finalDiarOutput = diarOutput
+                await MainActor.run { [weak self] in
+                    guard let self = self else { return }
+                    var aligned = finalSegments
+                    
+                    // 保留处理期间用户手动修改的发言人标签（基于时间重叠度匹配）
+                    let originalSegments = self.transcriptSegments
+                    
+                    aligned = aligned.map { seg in
+                        var s = seg
+                        
+                        // 1. 根据时间重叠度寻找最匹配的原始段
+                        let overlapping = originalSegments.filter {
+                            $0.startTime < s.endTime && $0.endTime > s.startTime
+                        }
+                        
+                        if let bestMatch = overlapping.max(by: { a, b in
+                            let overlapA = min(a.endTime, s.endTime) - max(a.startTime, s.startTime)
+                            let overlapB = min(b.endTime, s.endTime) - max(b.startTime, s.startTime)
+                            return overlapA < overlapB
+                        }) {
+                            // 优先恢复已被用户手动重命名的发言人（非 Speaker_ 开头）
+                            if !bestMatch.speakerLabel.hasPrefix("Speaker_") {
+                                s.speakerLabel = bestMatch.speakerLabel
+                                s.contactId = bestMatch.contactId
                             }
                         }
-                    },
-                    onIncrementalResult: { segments, embeddings in
-                        // 将中间态声纹结果上抛给 sharedState，供 Consumer Task 实时对齐
-                        await sharedState.setDiarization(segments, embeddings: embeddings)
                         
-                        // 执行实时的通讯录匹配，让前台实时显示识别出的真实姓名
-                        var autoMap: [String: (name: String, contactId: String)] = [:]
-                        if !referenceProfiles.isEmpty {
-                            let matchResult = SpeakerMatcher.match(embeddings: embeddings, against: referenceProfiles)
+                        // 2. 如果之前没有改名，但处于全局待重命名列表中（防止漏网之鱼）
+                        if s.speakerLabel.hasPrefix("Speaker_"), let pending = self.pendingSpeakerRenames[s.speakerLabel] {
+                            s.speakerLabel = pending.newName
+                            s.contactId = pending.contactId
+                        }
+                        return s
+                    }
+                    
+                    // finalDiarOutput is captured from outside
+                    // --- 声纹匹配与联系人替换 ---
+                    let matchEmbeddings = finalDiarOutput?.embeddings ?? [:]
+                    if !matchEmbeddings.isEmpty {
+                        self.lastDiarEmbeddings = matchEmbeddings
+                        do {
+                            try self.databaseManager.saveMeetingEmbeddings(meetingId: meetingId, embeddings: matchEmbeddings)
+                        } catch {
+                            AppLog.error("Failed to save voiceprint vectors meeting=\(meetingId): \(error.localizedDescription)")
+                        }
+                        
+                        let knownContacts = self.databaseManager.fetchContactsWithEmbeddings()
+                        var matchedSpeakerIds = Set<String>()
+                        if !knownContacts.isEmpty {
+                            let matchResult = SpeakerMatcher.match(embeddings: matchEmbeddings, against: knownContacts)
+                            matchedSpeakerIds = matchResult.matchedSpeakerIds
+                            
+                            var autoMap: [String: (name: String, contactId: String)] = [:]
                             for (speakerId, match) in matchResult.highConfidence {
+                                self.addAttendee(match.name)
                                 autoMap[speakerId] = (name: match.name, contactId: match.contactId)
                             }
-                        }
-                        if !autoMap.isEmpty { await sharedState.setSpeakerMap(autoMap) }
-                    }
-                )
-
-                // Whisper 转写（主线程等待，并推送文本段给 UI 消费者，实现“先出文本、再对齐声纹”的效果）
-                let offlineSegments = try await WhisperService.shared.transcribe(
-                    audioURL: audioURL, meetingId: meetingId, language: speechLang,
-                    onSegments: { partialSegments in
-                        segmentQueue.async { pendingChunks.append(partialSegments) }
-                    }
-                )
-                try Task.checkCancellation()
-                AppLog.info("[Diar] Whisper complete: \(offlineSegments.count) segments, awaiting global diarization...")
-
-                // 等待全局高精声纹分离完成
-                let diarOutput = try await diarTask
-                // diarization 完成，立即释放 samples 数组（后续仅需声纹向量和段边界）
-                samples.removeAll()
-
-                let speakerCount = Set(diarOutput.segments.map(\.speakerId)).count
-                AppLog.info("[Diar] Voiceprint diarization result: \(speakerCount) speakers, \(diarOutput.segments.count) segments | config: incrClusterDist=\(SettingsManager.shared.incrementalClusteringDistance)")
-                
-                // 强制将收尾合并（mergeSimilarClusters）后的最终 segments 与 embeddings 写回 sharedState，消除临时 Speaker_C 等残留标签
-                // onIncrementalResult 已在 DiarizationService 最终合并后触发过一次，此处为保险兜底
-                await sharedState.setDiarization(diarOutput.segments, embeddings: diarOutput.embeddings)
-                
-                let matchEmbeddings = diarOutput.embeddings
-                self.lastDiarEmbeddings = matchEmbeddings
-                // 保存声纹向量到数据库（防止重启丢失）
-                do {
-                    try await self.databaseManager.saveMeetingEmbeddings(meetingId: meetingId, embeddings: matchEmbeddings)
-                } catch {
-                    AppLog.error("[Diar] Failed to save meeting voiceprint vectors meeting=\(meetingId): \(error.localizedDescription)")
-                }
-
-                // 最终收尾匹配：复用先前拉取的 referenceProfiles，执行联系人声纹持久化
-                AppLog.info("[Diar] Voiceprint matching against all known profiles (count=\(referenceProfiles.count))")
-                
-                var matchedSpeakerIds = Set<String>()
-                if !referenceProfiles.isEmpty {
-                    let matchResult = SpeakerMatcher.match(embeddings: matchEmbeddings, against: referenceProfiles)
-                    matchedSpeakerIds = matchResult.matchedSpeakerIds
-                    
-                    var autoMap: [String: (name: String, contactId: String)] = [:]
-                    for (speakerId, match) in matchResult.highConfidence {
-                        autoMap[speakerId] = (name: match.name, contactId: match.contactId)
-                        // 声纹持久化延迟到退出会议时由用户确认
-                    }
-                    if !autoMap.isEmpty { await sharedState.setSpeakerMap(autoMap) }
-                }
-
-                await sharedState.setMatchedSpeakerIds(matchedSpeakerIds)
-
-                // 等待消费者处理完回调发出的最后一批段
-                try? await Task.sleep(nanoseconds: 500_000_000)
-                // 关闭消费者
-                consumerTask.cancel()
-
-                // 以 offlineSegments（完整转写结果）为最终基准，对齐声纹分离
-                var finalSegments: [TranscriptSegment]
-                if let diar = await sharedState.getDiarSegments(), !diar.isEmpty {
-                    finalSegments = await SpeakerAlignmentService.align(transcripts: offlineSegments, diarization: diar)
-                } else {
-                    finalSegments = offlineSegments
-                }
-                // 过滤 Whisper 可能产出的空文本段
-                finalSegments = finalSegments.filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-
-                // 恢复用户手动修改过的标签（从消费者已处理的段中提取）
-                let currentSegs = await MainActor.run { self.transcriptSegments }
-                var customLabels: [String: (label: String, contactId: String?)] = [:]
-                for seg in currentSegs {
-                    if !seg.speakerLabel.isEmpty && !seg.speakerLabel.hasPrefix("Speaker_") && seg.speakerLabel != "?" {
-                        customLabels[seg.id] = (seg.speakerLabel, seg.contactId)
-                    }
-                }
-                if !customLabels.isEmpty {
-                    finalSegments = finalSegments.map { seg in
-                        var s = seg
-                        if let saved = customLabels[seg.id] {
-                            s.speakerLabel = saved.label
-                            s.contactId = saved.contactId
-                        }
-                        return s
-                    }
-                }
-
-                // 应用声纹匹配映射
-                if let autoMap = await sharedState.getSpeakerMap(), !autoMap.isEmpty {
-                    finalSegments = finalSegments.map { seg in
-                        var s = seg
-                        if let match = autoMap[seg.speakerLabel] {
-                            s.speakerLabel = match.name
-                            s.contactId = match.contactId
-                        }
-                        return s
-                    }
-                }
-
-                // 恢复实时录音阶段的声纹标签（按时间重叠匹配，防止离线 diarization 互换标签）
-                if !savedRealtimeSegments.isEmpty {
-                    finalSegments = finalSegments.map { seg in
-                        var s = seg
-                        // 仅当当前标签仍是 Speaker_ 开头（未被联系人匹配覆盖）时才尝试恢复
-                        guard s.speakerLabel.hasPrefix("Speaker_") else { return s }
-                        var bestMatch: TranscriptSegment?
-                        var bestOverlap: Double = 0
-                        for rt in savedRealtimeSegments where !rt.speakerLabel.isEmpty && !rt.speakerLabel.hasPrefix("Speaker_") && rt.speakerLabel != "?" {
-                            let overlapStart = max(s.startTime, rt.startTime)
-                            let overlapEnd = min(s.endTime, rt.endTime)
-                            let overlap = max(0, overlapEnd - overlapStart)
-                            if overlap > bestOverlap {
-                                bestOverlap = overlap
-                                bestMatch = rt
+                            if !autoMap.isEmpty {
+                                aligned = aligned.map { seg in
+                                    var s = seg
+                                    // 仅在未被手动重命名的前提下，应用自动匹配结果
+                                    if s.speakerLabel.hasPrefix("Speaker_"), let match = autoMap[s.speakerLabel] {
+                                        s.speakerLabel = match.name
+                                        s.contactId = match.contactId
+                                    }
+                                    return s
+                                }
                             }
                         }
-                        if let match = bestMatch, bestOverlap > 0.5 {
-                            s.speakerLabel = match.speakerLabel
-                            s.contactId = match.contactId
-                        }
-                        return s
-                    }
-                }
-
-                // 获取已匹配的 speaker ID 列表，用于识别需要转正的新发言人
-                let matchedIds = await sharedState.getMatchedSpeakerIds()
-                let remainingLabels = Set(finalSegments.map(\.speakerLabel)).filter { $0.hasPrefix("Speaker_") && !matchedIds.contains($0) }
-
-                // 未匹配的临时 Speaker：仅存内存（声纹向量 + 联系人），不写库。退出时根据发言记录决定是否保存
-                await MainActor.run { [weak self] in
-                    guard let self = self else { return }
-                    for speakerId in remainingLabels {
-                        if let emb = matchEmbeddings[speakerId], !emb.isEmpty {
-                            _ = self.getOrCreateMemoryContact(for: speakerId, embedding: emb)
-                            AppLog.info("[Diar] Unmatched speaker '\(speakerId)' kept in memory (pending exit confirmation)")
+                        
+                        let remainingLabels = Set(aligned.map(\.speakerLabel)).filter { $0.hasPrefix("Speaker_") && !matchedSpeakerIds.contains($0) }
+                        for label in remainingLabels {
+                            self.addAttendee(label)
+                            let memContact = self.getOrCreateMemoryContact(for: label, embedding: matchEmbeddings[label])
+                            for i in 0..<aligned.count where aligned[i].speakerLabel == label {
+                                aligned[i].contactId = memContact.id
+                            }
                         }
                     }
-                }
-
-                await MainActor.run { [weak self] in
-                    guard let self = self else { return }
-                    AppLog.info("[Diar] Binding memory contactIds for \(remainingLabels.count) unmatched speakers: \(remainingLabels.sorted().joined(separator: ", "))")
-                    // 未匹配的临时 Speaker 转正：绑定内存 contactId
-                    for label in remainingLabels {
-                        self.addAttendee(label)
-                        let memContact = self.getOrCreateMemoryContact(for: label)
-                        AppLog.info("[Diar]   \(label) -> contactId=\(memContact.id)")
-                        for i in 0..<finalSegments.count where finalSegments[i].speakerLabel == label {
-                            finalSegments[i].contactId = memContact.id
-                        }
-                    }
-                    // 清理已被匹配到已知联系人的 pending 条目（增量阶段创建的，最终匹配已解析）
-                    let staleKeys = self.pendingNewContacts.keys.filter { key in
-                        key.hasPrefix("Speaker_") && !remainingLabels.contains(key)
-                    }
-                    if !staleKeys.isEmpty {
-                        AppLog.info("[Diar] Cleaning up \(staleKeys.count) stale pending contacts (matched to known): \(staleKeys.sorted().joined(separator: ", "))")
-                        for key in staleKeys {
-                            self.pendingNewContacts.removeValue(forKey: key)
-                            self.pendingNewEmbeddings.removeValue(forKey: key)
-                        }
-                    }
-                    self.transcriptSegments = finalSegments
-                    self.segmentCount = finalSegments.count
-                    self.offlineTotalSegments = finalSegments.count
+                    
+                    self.transcriptSegments = aligned.filter { !$0.isPlaceholder }
+                    self.segmentCount = aligned.filter { !$0.isPlaceholder }.count
+                    self.offlineTotalSegments = aligned.filter { !$0.isPlaceholder }.count
                     self.offlineProgressFraction = 1.0
-                    self.saveSegmentsToDatabase(meetingId: meetingId)
-                    let allLabeled = finalSegments.filter { $0.isFinal }.allSatisfy { !$0.speakerLabel.isEmpty && $0.speakerLabel != "?" }
-                    safeUpdateStatus(id: meetingId, status: allLabeled ? .completed : .pendingDiarization)
-                    AppLog.info("Offline transcription + diarization complete: \(finalSegments.count) segments")
+                    
+                    // 终态持久化，放入后台线程避免卡死 UI
+                    Task.detached { [weak self, meetingId, aligned] in
+                        await self?.saveSegmentsToDatabase(meetingId: meetingId, segments: aligned)
+                    }
+                    
+                    safeUpdateStatus(id: meetingId, status: .completed)
+                    AppLog.info("Offline transcription + diarization complete: \(aligned.count) segments")
+                    
+                    let finals = aligned.filter { $0.isFinal }
+                    var knownSpeakers: [String: Int] = [:]
+                    var unknownSpeakers: [String: Int] = [:]
+                    for seg in finals {
+                        if seg.speakerLabel.hasPrefix("Speaker_") {
+                            unknownSpeakers[seg.speakerLabel, default: 0] += 1
+                        } else if seg.speakerLabel != "?" {
+                            knownSpeakers[seg.speakerLabel, default: 0] += 1
+                        }
+                    }
+                    
+                    var msgLines: [String] = []
+                    if !knownSpeakers.isEmpty {
+                        let knownDetails = knownSpeakers.sorted(by: { $0.value > $1.value })
+                            .map { "\($0.key)(\($0.value)句)" }
+                            .joined(separator: "，")
+                        msgLines.append("已知发言人 \(knownSpeakers.count) 位：\(knownDetails)")
+                    }
+                    if !unknownSpeakers.isEmpty {
+                        let unkTotal = unknownSpeakers.values.reduce(0, +)
+                        msgLines.append("未知发言人 \(unknownSpeakers.count) 位，总计发言 \(unkTotal) 句")
+                    }
+                    if knownSpeakers.isEmpty && unknownSpeakers.isEmpty {
+                        msgLines.append("已生成 \(aligned.count) 句转写文本。")
+                    }
+                    self.analysisCompletionMessage = msgLines.joined(separator: "\n")
                 }
             } catch is CancellationError {
                 AppLog.warn("Offline transcription cancelled: meeting=\(meetingId)")
@@ -866,7 +954,7 @@ final class RecordingViewModel {
 
     /// 从音频文件元数据提取录制日期
     /// 支持: WAV(BWF bext) / M4A(QuickTime) / MP3(ID3v2) / FLAC(Vorbis Comment)
-    private func extractAudioRecordingDate(from url: URL) -> Date? {
+    private func extractAudioRecordingDate(from url: URL) async -> Date? {
         // 0) WAV: 优先尝试 BWF bext chunk 二进制解析（AVAsset 不暴露 bext）
         if url.pathExtension.lowercased() == "wav",
            let bwfDate = extractBWFOriginationDate(from: url) {
@@ -876,49 +964,52 @@ final class RecordingViewModel {
         let asset = AVAsset(url: url)
 
         // 1) 通用元数据（commonMetadata 比 metadata 更可靠）
-        for item in asset.commonMetadata {
-            if item.commonKey == .commonKeyCreationDate,
-               let date = item.dateValue {
-                AppLog.info("[Import] 从 commonMetadata.creationDate 提取到录制时间: \(date)")
-                return date
+        if let commonMetadata = try? await asset.load(.commonMetadata) {
+            for item in commonMetadata {
+                if item.commonKey == .commonKeyCreationDate,
+                   let date = try? await item.load(.dateValue) {
+                    AppLog.info("[Import] 从 commonMetadata.creationDate 提取到录制时间: \(date)")
+                    return date
+                }
             }
         }
 
         // 2) 遍历所有可用元数据格式（不假定固定格式名）
-        let allFormats = asset.availableMetadataFormats
-        for format in allFormats {
-            let items = asset.metadata(forFormat: format)
-            for item in items {
-                // 按 commonKey 匹配
-                if item.commonKey == .commonKeyCreationDate,
-                   let date = item.dateValue {
-                    AppLog.info("[Import] 从格式 \(format) 的 creationDate 提取到录制时间: \(date)")
-                    return date
-                }
-                // 按 key 字符串匹配录制时间键名
-                let keyStr = (item.key as? String) ?? ""
-                let lowerKey = keyStr.lowercased()
-                // QuickTime / iTunes / 通用
-                if lowerKey.hasPrefix("creationdate") || lowerKey.hasPrefix("creation_date")
-                    || lowerKey.contains("recordingdate") || lowerKey.contains("recording_date")
-                    || lowerKey.contains("recordeddate") || lowerKey.contains("recorded_date")
-                    || keyStr == "©day" || keyStr == "date"
-                    // ID3v2: TDRC(RecordingTime), TDAT(Date), TYER(Year), TDRL(ReleaseTime)
-                    || lowerKey == "tdrc" || lowerKey == "tdat"
-                    || lowerKey == "tyer" || lowerKey == "tdrl"
-                    // Vorbis Comment (FLAC): DATE, YEAR, DATE_RECORDED, RECORDING_DATE
-                    || lowerKey == "date" || lowerKey == "year"
-                    || lowerKey == "date_recorded" || lowerKey == "recording_date" {
-                    if let date = item.dateValue {
-                        AppLog.info("[Import] 从格式 \(format) key=\(keyStr) 提取到录制时间: \(date)")
+        if let allFormats = try? await asset.load(.availableMetadataFormats) {
+            for format in allFormats {
+                let items = try? await asset.loadMetadata(for: format)
+                for item in items ?? [] {
+                    // 按 commonKey 匹配
+                    if item.commonKey == .commonKeyCreationDate,
+                       let date = try? await item.load(.dateValue) {
+                        AppLog.info("[Import] 从格式 \(format) 的 creationDate 提取到录制时间: \(date)")
                         return date
                     }
-                    // 有些元数据把日期存为字符串
-                    if let dateStr = item.stringValue {
-                        AppLog.info("[Import] 从格式 \(format) key=\(keyStr) 得到字符串: \(dateStr)")
-                        if let parsed = parseDateString(dateStr) {
-                            AppLog.info("[Import] 字符串解析为日期: \(parsed)")
-                            return parsed
+                    // 按 key 字符串匹配录制时间键名
+                    let keyStr = (item.key as? String) ?? ""
+                    let lowerKey = keyStr.lowercased()
+                    // QuickTime / iTunes / 通用
+                    if lowerKey.hasPrefix("creationdate") || lowerKey.hasPrefix("creation_date")
+                        || lowerKey.contains("recordingdate") || lowerKey.contains("recording_date")
+                        || lowerKey.contains("recordeddate") || lowerKey.contains("recorded_date")
+                        || keyStr == "©day" || keyStr == "date"
+                        // ID3v2: TDRC(RecordingTime), TDAT(Date), TYER(Year), TDRL(ReleaseTime)
+                        || lowerKey == "tdrc" || lowerKey == "tdat"
+                        || lowerKey == "tyer" || lowerKey == "tdrl"
+                        // Vorbis Comment (FLAC): DATE, YEAR, DATE_RECORDED, RECORDING_DATE
+                        || lowerKey == "date" || lowerKey == "year"
+                        || lowerKey == "date_recorded" || lowerKey == "recording_date" {
+                        if let date = try? await item.load(.dateValue) {
+                            AppLog.info("[Import] 从格式 \(format) key=\(keyStr) 提取到录制时间: \(date)")
+                            return date
+                        }
+                        // 有些元数据把日期存为字符串
+                        if let dateStr = try? await item.load(.stringValue) {
+                            AppLog.info("[Import] 从格式 \(format) key=\(keyStr) 得到字符串: \(dateStr)")
+                            if let parsed = parseDateString(dateStr) {
+                                AppLog.info("[Import] 字符串解析为日期: \(parsed)")
+                                return parsed
+                            }
                         }
                     }
                 }
@@ -927,16 +1018,24 @@ final class RecordingViewModel {
 
         // 诊断：元数据不存在时打印所有已知键帮助排查
         AppLog.info("[Import] 未提取到录制时间，文件 \(url.lastPathComponent) 的元数据摘要:")
-        for format in allFormats {
-            let items = asset.metadata(forFormat: format)
-            for item in items {
-                let keyStr = (item.key as? String) ?? "\(item.key)"
-                let valPreview: String
-                if let d = item.dateValue { valPreview = "Date(\(d))" }
-                else if let s = item.stringValue { valPreview = "\"\(s.prefix(50))\"" }
-                else if let n = item.numberValue { valPreview = "\(n)" }
-                else { valPreview = "\(String(describing: item.value).prefix(50))" }
-                AppLog.info("[Import]   格式=\(format) key=\(keyStr) value=\(valPreview)")
+        if let allFormats = try? await asset.load(.availableMetadataFormats) {
+            for format in allFormats {
+                let items = (try? await asset.loadMetadata(for: format)) ?? []
+                for item in items {
+                    let keyStr = (item.key as? String) ?? (item.key != nil ? String(describing: item.key!) : "nil")
+                    let valPreview: String
+                    if let d = try? await item.load(.dateValue) { valPreview = "Date(\(d))" }
+                    else if let s = try? await item.load(.stringValue) { valPreview = "\"\(s.prefix(50))\"" }
+                    else if let n = try? await item.load(.numberValue) { valPreview = "\(n)" }
+                    else {
+                        if let v = try? await item.load(.value) {
+                            valPreview = "\(String(describing: v).prefix(50))"
+                        } else {
+                            valPreview = "nil"
+                        }
+                    }
+                    AppLog.info("[Import]   格式=\(format) key=\(keyStr) value=\(valPreview)")
+                }
             }
         }
 
@@ -1036,9 +1135,11 @@ final class RecordingViewModel {
 
     /// 选音频文件后立即调用：从元数据提取真实录制时间覆盖表单日期
     func updateFormDateFromAudioFile(at url: URL) {
-        if let recordingDate = extractAudioRecordingDate(from: url) {
-            formCreatedAt = recordingDate
-            AppLog.info("[Import] 音频录制时间已提取: \(recordingDate)")
+        Task { @MainActor in
+            if let recordingDate = await extractAudioRecordingDate(from: url) {
+                self.formCreatedAt = recordingDate
+                AppLog.info("[Import] 音频录制时间已提取: \(recordingDate)")
+            }
         }
     }
 
@@ -1068,10 +1169,12 @@ final class RecordingViewModel {
         }
 
         let fileName = sourceURL.lastPathComponent
-        let meetingTitle = title ?? fileName.replacingOccurrences(
+        let fileBaseName = fileName.replacingOccurrences(
             of: ".\(ext)", with: "",
             options: .caseInsensitive
         )
+        let meetingTitle = title ?? "\(fileBaseName) \(formattedDate)"
+        AppLog.info("importAudioFile title: param=\(title ?? "nil"), fileBaseName=\(fileBaseName), formattedDate=\(formattedDate), result=\(meetingTitle)")
 
         var parentId: String? = nil
         if shouldExtendLastMeeting {
@@ -1178,6 +1281,9 @@ final class RecordingViewModel {
     /// - Returns: 内存 Contact（同时记录声纹向量用于比对）
     func getOrCreateMemoryContact(for label: String, embedding: [Float]? = nil) -> Contact {
         if let existing = pendingNewContacts[label] {
+            if let emb = embedding, !emb.isEmpty {
+                pendingNewEmbeddings[label] = emb
+            }
             return existing
         }
         let contact = Contact.create(name: label)
@@ -1213,22 +1319,18 @@ final class RecordingViewModel {
             } catch {
                 AppLog.error("saveEmbeddingForSpeaker failed speaker=\(speakerLabel): \(error.localizedDescription)")
             }
-        } else if let (fallbackLabel, emb) = embeddings.first {
-            do {
-                try databaseManager.mergeContactEmbedding(contactId: contactId, newEmbedding: emb, newDuration: Float(totalDuration))
-                AppLog.info("saveEmbeddingForSpeaker fallback merged \(fallbackLabel) -> \(contactId), duration=\(String(format: "%.1f", totalDuration))s")
-            } catch {
-                AppLog.error("saveEmbeddingForSpeaker fallback merge failed: \(error.localizedDescription)")
-            }
+        } else {
+            AppLog.warn("saveEmbeddingForSpeaker failed: no embedding found for \(speakerLabel)")
         }
     }
 
-    func updateMeetingMetadata(title: String, location: String?, createdAt: Date, attendees: String, duration: Int? = nil) {
+    func updateMeetingMetadata(title: String, location: String?, createdAt: Date, attendees: String, hotwordCategories: String? = nil, duration: Int? = nil) {
         guard var meeting = currentMeeting else { return }
         meeting.title = title
         meeting.location = location
         meeting.createdAt = createdAt
         meeting.attendees = attendees
+        meeting.hotwordCategories = hotwordCategories
         if let d = duration {
             meeting.duration = d
         }
@@ -1240,6 +1342,7 @@ final class RecordingViewModel {
                 location: location,
                 createdAt: createdAt,
                 attendees: attendees,
+                hotwordCategories: hotwordCategories,
                 duration: duration
             )
             currentMeeting = meeting
@@ -1278,56 +1381,56 @@ final class RecordingViewModel {
         }
     }
     
-    /// 将当前内存中的片段持久化到数据库（使用事务确保原子性）
-    private func saveSegmentsToDatabase(meetingId: String) {
-        guard databaseManager.meetingExists(id: meetingId) else {
-            AppLog.info("saveSegmentsToDatabase: meeting \(meetingId) no longer exists, skipping")
-            return
-        }
-        let count = transcriptSegments.count
-        AppLog.info("[Save] saveSegmentsToDatabase meeting=\(meetingId) segments=\(count)")
-
-        // 安全保护：如果内存段为空，检查数据库是否已有数据
-        // 防止因 UI 状态异常导致已保存的发言记录被清空
-        if count == 0 {
-            let existingCount = databaseManager.fetchSpeechClipsCount(meetingId: meetingId)
-            if existingCount > 0 {
-                AppLog.warn("[Save] Refusing to overwrite \(existingCount) existing DB clips with 0 in-memory segments for meeting \(meetingId)")
+    /// 将指定的片段持久化到数据库（使用事务确保原子性，设计为可在后台线程运行）
+    func saveSegmentsToDatabase(meetingId: String, segments: [TranscriptSegment]? = nil) {
+        let segmentsToSave = segments ?? self.transcriptSegments
+        
+        Task { @MainActor in
+            guard self.databaseManager.meetingExists(id: meetingId) else {
+                AppLog.info("saveSegmentsToDatabase: meeting \(meetingId) no longer exists, skipping")
                 return
             }
-        }
+            let count = segmentsToSave.count
+            AppLog.info("[Save] saveSegmentsToDatabase meeting=\(meetingId) segments=\(count)")
 
-        do {
-            // 使用事务保证原子性：要么全部写入，要么全部回滚
-            try databaseManager.beginTransaction()
-            do {
-                // 先删后插，包裹在事务中保证一致性
-                try databaseManager.deleteSpeechClips(meetingId: meetingId)
-                var savedCount = 0
-                for segment in transcriptSegments {
-                    let clip = SpeechClip(
-                        id: segment.id,
-                        meetingId: meetingId,
-                        speakerLabel: segment.speakerLabel,
-                        contactId: segment.contactId,
-                        startTime: segment.startTime,
-                        endTime: segment.endTime,
-                        originalText: segment.text,
-                        cleanedText: nil,
-                        audioClipPath: nil,
-                        isKeyClip: false
-                    )
-                    try databaseManager.saveSpeechClip(clip)
-                    savedCount += 1
+            if count == 0 {
+                let existingCount = self.databaseManager.fetchSpeechClipsCount(meetingId: meetingId)
+                if existingCount > 0 {
+                    AppLog.warn("[Save] Refusing to overwrite \(existingCount) existing DB clips with 0 in-memory segments for meeting \(meetingId)")
+                    return
                 }
-                try databaseManager.commitTransaction()
-                AppLog.info("[Save] Saved \(savedCount)/\(count) segments to DB meeting=\(meetingId)")
-            } catch {
-                try databaseManager.rollbackTransaction()
-                AppLog.error("[Save] Transaction rolled back for meeting \(meetingId): \(error.localizedDescription)")
             }
-        } catch {
-            AppLog.error("Failed to save transcript segments meeting=\(meetingId): \(error.localizedDescription)")
+
+            do {
+                try self.databaseManager.beginTransaction()
+                do {
+                    try self.databaseManager.deleteSpeechClips(meetingId: meetingId)
+                    var savedCount = 0
+                    for segment in segmentsToSave {
+                        let clip = SpeechClip(
+                            id: segment.id,
+                            meetingId: meetingId,
+                            speakerLabel: segment.speakerLabel,
+                            contactId: segment.contactId,
+                            startTime: segment.startTime,
+                            endTime: segment.endTime,
+                            originalText: segment.text,
+                            cleanedText: nil,
+                            audioClipPath: nil,
+                            isKeyClip: false
+                        )
+                        try self.databaseManager.saveSpeechClip(clip)
+                        savedCount += 1
+                    }
+                    try self.databaseManager.commitTransaction()
+                    AppLog.info("[Save] Saved \(savedCount)/\(count) segments to DB meeting=\(meetingId)")
+                } catch {
+                    try self.databaseManager.rollbackTransaction()
+                    AppLog.error("[Save] Transaction rolled back for meeting \(meetingId): \(error.localizedDescription)")
+                }
+            } catch {
+                AppLog.error("Failed to save transcript segments meeting=\(meetingId): \(error.localizedDescription)")
+            }
         }
     }
 
@@ -1479,41 +1582,27 @@ final class RecordingViewModel {
                 }
             }
         }
+
+        // 记录待持久化的重命名：退出会议时统一写入 DB
+        if let id = cid {
+            pendingSpeakerRenames[oldName] = (newName: newName, contactId: id)
+        }
+        
+        // 实时同步到数据库
+        if let meeting = currentMeeting {
+            let meetingId = meeting.id
+            Task { @MainActor in
+                self.addAttendee(newName)
+                self.saveSegmentsToDatabase(meetingId: meetingId)
+            }
+        }
     }
 
     /// 更新片段发言人标签
     func updateSpeakerLabel(id: String, newLabel: String) {
         if let index = transcriptSegments.firstIndex(where: { $0.id == id }) {
             let oldLabel = transcriptSegments[index].speakerLabel
-            
-            var contact = databaseManager.fetchContact(byName: newLabel)
-            if contact == nil {
-                contact = Contact.create(name: newLabel)
-                do {
-                    try databaseManager.saveContact(contact!)
-                } catch {
-                    AppLog.error("updateSpeakerLabel save contact failed name=\(newLabel): \(error.localizedDescription)")
-                }
-            }
-            
-            globalRenameSpeaker(oldName: oldLabel, newName: newLabel, contactId: contact?.id)
-            
-            if let meetingId = currentMeeting?.id {
-                let clips = databaseManager.fetchSpeechClips(meetingId: meetingId)
-                for clip in clips {
-                    if clip.speakerLabel == oldLabel || clip.speakerLabel == newLabel {
-                        do {
-                            try databaseManager.updateSpeechClipContact(
-                                clipId: clip.id,
-                                speakerLabel: newLabel,
-                                contactId: contact?.id
-                            )
-                        } catch {
-                            AppLog.warn("updateSpeechClipContact failed clip=\(clip.id): \(error.localizedDescription)")
-                        }
-                    }
-                }
-            }
+            globalRenameSpeaker(oldName: oldLabel, newName: newLabel)
         }
     }
 
@@ -1597,6 +1686,23 @@ final class RecordingViewModel {
                 }
             }
         }
+        // 已保存的联系人：将 contactId 回写到对应 speakerLabel 的发言片段
+        if !toSave.isEmpty, let meetingId = currentMeeting?.id {
+            let nameToId: [String: String] = Dictionary(uniqueKeysWithValues: toSave.map { ($0.name, $0.id) })
+            let clips = databaseManager.fetchSpeechClips(meetingId: meetingId)
+            var backfillCount = 0
+            for clip in clips {
+                if let cid = nameToId[clip.speakerLabel], clip.contactId == nil {
+                    try? databaseManager.updateSpeechClipContact(
+                        clipId: clip.id,
+                        speakerLabel: clip.speakerLabel,
+                        contactId: cid
+                    )
+                    backfillCount += 1
+                }
+            }
+            AppLog.info("[Exit] confirmSaveNewContacts: backfilled contactId for \(backfillCount)/\(clips.count) clips")
+        }
         // 未勾选的联系人：保留可读名称到 speakerLabel，清除 contactId
         let discardedIds = Set(pendingNewContactsToPrompt.map(\.id)).subtracting(Set(toSave.map(\.id)))
         if !discardedIds.isEmpty, let meetingId = currentMeeting?.id {
@@ -1669,9 +1775,39 @@ final class RecordingViewModel {
 
     /// 最终清理并返回首页
     private func finalizeExit() {
-        // 取消正在运行的后台分析任务，防止其继续持有 samples / ONNX 会话等大量内存
-        transcriptionTask?.cancel()
+        // 取消正在运行的后台分析任务，并等待其安全结束，再释放 ONNX 模型
+        // 避免 sherpa-onnx C API 中模型创建/销毁与 ONNX Runtime 全局状态竞态导致崩溃
+        let task = transcriptionTask
         transcriptionTask = nil
+        task?.cancel()
+        
+        // 统一持久化：退出前将发言人重命名写回 speech_clips 和 meeting.attendees
+        if let meeting = currentMeeting, !pendingSpeakerRenames.isEmpty {
+            let clips = databaseManager.fetchSpeechClips(meetingId: meeting.id)
+            for clip in clips {
+                if let rename = pendingSpeakerRenames[clip.speakerLabel] {
+                    try? databaseManager.updateSpeechClipContact(
+                        clipId: clip.id, speakerLabel: rename.newName, contactId: rename.contactId
+                    )
+                }
+            }
+            // 更新 meeting.attendees：将新名字加入参会列表
+            var attendees = (meeting.attendees ?? "").components(separatedBy: .whitespaces).filter { !$0.isEmpty }
+            for rename in pendingSpeakerRenames.values {
+                if !attendees.contains(rename.newName) {
+                    attendees.append(rename.newName)
+                }
+            }
+            if attendees != (meeting.attendees ?? "").components(separatedBy: .whitespaces).filter({ !$0.isEmpty }) {
+                try? databaseManager.updateMeetingInfo(
+                    id: meeting.id, title: meeting.title, location: meeting.location,
+                    createdAt: meeting.createdAt,
+                    attendees: attendees.joined(separator: " "),
+                    duration: meeting.duration
+                )
+            }
+            AppLog.info("[Exit] Persisted \(pendingSpeakerRenames.count) speaker renames")
+        }
         
         // 确保会议状态持久化到数据库
         if let meeting = currentMeeting {
@@ -1681,6 +1817,7 @@ final class RecordingViewModel {
         pendingNewContacts = [:]
         pendingNewEmbeddings = [:]
         pendingNewContactsToPrompt = []
+        pendingSpeakerRenames = [:]
         audioChunks = []
         audioPlayer.stop()
         meetingStatus = .idle
@@ -1689,10 +1826,15 @@ final class RecordingViewModel {
         recordingDuration = 0
         lastDiarEmbeddings = [:]
 
-        // 释放 WhisperKit 大模型 (~1.6GB) 和 sherpa-onnx ONNX 会话 (~500MB-1GB)
-        // 下次分析时按需重新加载
-        Task { await WhisperService.shared.reset() }
-        Task { await DiarizationService.shared.reset() }
+        // 释放 sherpa-onnx ONNX 会话 (~500MB-1GB)，下次分析时按需重新加载
+        // 先等待已取消的后台任务安全结束，避免与 ONNX Runtime 全局状态竞态
+        Task {
+            if let t = task {
+                _ = await t.value  // 等待 detached task 自然结束（已 cancel，会在下一个 suspension 点抛出）
+            }
+            await FunASRService.shared.reset()
+            await DiarizationService.shared.reset()
+        }
     }
 
     // MARK: - 格式化
@@ -1720,8 +1862,17 @@ final class RecordingViewModel {
 
     private var formattedDate: String {
         let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd"
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
         return formatter.string(from: Date())
+    }
+
+    /// 实时更新 AudioChunk 的文本（用户手动编辑）
+    func updateChunkText(chunkId: String, newText: String) {
+        if let idx = audioChunks.firstIndex(where: { $0.id == chunkId }) {
+            audioChunks[idx].text = newText
+        }
+        // 同步到 AudioRecorder 内部状态
+        audioRecorder.updateChunkText(chunkId: chunkId, newText: newText)
     }
 
     private func resetForm() {
@@ -1733,6 +1884,7 @@ final class RecordingViewModel {
         formCreatedAt = Date()
         recordingMode = .liveRecording
         formSpeechLang = UserDefaults.standard.string(forKey: "speech_language") ?? "zh"
+        formHotwordCategories = []
     }
 }
 

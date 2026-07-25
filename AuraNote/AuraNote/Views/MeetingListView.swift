@@ -24,6 +24,41 @@ struct MeetingListView: View {
     // 引导向导：nil = 不显示, 0/1/2 = 当前高亮步骤
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
     @State private var wizardStep: Int? = nil
+    // 语言刷新触发器（@Observable 单例静态属性变化不自动触发视图重绘）
+    @State private var langRefresh = 0
+
+    private var langButtonLabel: String {
+        switch SettingsManager.shared.langSetting {
+        case "zh-Hans":
+            return "简体中文"
+        case "en":
+            return "English"
+        default:
+            return loc("follow_system")
+        }
+    }
+
+    /// 按钮上显示的短标记（中 / EN / SYS）
+    private var langBadge: String {
+        switch SettingsManager.shared.langSetting {
+        case "zh-Hans": return "中"
+        case "en":       return "EN"
+        default:         return "SYS"
+        }
+    }
+    
+    private func cycleLanguage() {
+        let current = SettingsManager.shared.langSetting
+        if current.isEmpty {
+            SettingsManager.shared.langSetting = "zh-Hans"
+        } else if current == "zh-Hans" {
+            SettingsManager.shared.langSetting = "en"
+        } else {
+            SettingsManager.shared.langSetting = ""
+        }
+        SettingsManager.shared.save()
+        langRefresh += 1   // 强制视图重绘
+    }
 
     var body: some View {
         NavigationStack {
@@ -55,6 +90,7 @@ struct MeetingListView: View {
             .background(Color(uiColor: .systemGroupedBackground))
             #endif
             .navigationTitle(loc("app_title"))
+            .id(langRefresh)   // 语言切换时强制整棵视图树重建
             #if os(iOS)
             .navigationBarTitleDisplayMode(.large)
             #endif
@@ -66,17 +102,17 @@ struct MeetingListView: View {
                     } label: {
                         Image(systemName: "questionmark.circle")
                     }
-                    .frame(width: 32)
+                    .frame(width: 32, height: 32)
                     .help(loc("wizard_help"))
 
                     NavigationLink(destination: SettingsView()) {
                         Image(systemName: "gearshape")
                     }
-                    .frame(width: 32)
+                    .frame(width: 32, height: 32)
                     .help(loc("settings"))
                     .popover(isPresented: wizardBinding(for: 0), arrowEdge: .bottom) {
                         WizardPopoverContent(
-                            step: 0, totalSteps: 3,
+                            step: 0, totalSteps: 5,
                             icon: "gearshape",
                             title: loc("wizard_settings_title"),
                             desc: loc("wizard_settings_desc"),
@@ -85,51 +121,107 @@ struct MeetingListView: View {
                         )
                     }
 
-                    NavigationLink(destination: PersonnelManagementView()) {
-                        Image(systemName: "person.2")
+                    NavigationLink(destination: HotwordsManagementView()) {
+                        Image(systemName: "text.book.closed")
                     }
-                    .frame(width: 32)
-                    .help(loc("personnel_voiceprint_help"))
+                    .frame(width: 32, height: 32)
+                    .help(loc("wizard_hotwords_title"))
                     .popover(isPresented: wizardBinding(for: 1), arrowEdge: .bottom) {
                         WizardPopoverContent(
-                            step: 1, totalSteps: 3,
-                            icon: "person.2",
-                            title: loc("wizard_personnel_title"),
-                            desc: loc("wizard_personnel_desc"),
+                            step: 1, totalSteps: 5,
+                            icon: "text.book.closed",
+                            title: loc("wizard_hotwords_title"),
+                            desc: loc("wizard_hotwords_desc"),
                             onNext: { wizardStep = 2 },
                             onSkip: finishOnboarding
                         )
                     }
 
+                    NavigationLink(destination: PersonnelManagementView()) {
+                        Image(systemName: "person.2")
+                    }
+                    .frame(width: 32, height: 32)
+                    .help(loc("personnel_voiceprint_help"))
+                    .popover(isPresented: wizardBinding(for: 2), arrowEdge: .bottom) {
+                        WizardPopoverContent(
+                            step: 2, totalSteps: 5,
+                            icon: "person.2",
+                            title: loc("wizard_personnel_title"),
+                            desc: loc("wizard_personnel_desc"),
+                            onNext: { wizardStep = 3 },
+                            onSkip: finishOnboarding
+                        )
+                    }
+
+                    // 创建会议按钮：可用时 Accent Color 填充高亮
                     Button {
                         recordingVM.onTapStartRecording()
                     } label: {
-                        Image(systemName: "pencil.and.list.clipboard")
+                        Image(systemName: "plus.circle.fill")
+                            .frame(width: 32, height: 32)
+                            .background(
+                                RoundedRectangle(cornerRadius: 7)
+                                    .fill(SettingsManager.shared.isModelAvailable
+                                          ? Color.accentColor
+                                          : Color.clear)
+                            )
+                            .foregroundStyle(SettingsManager.shared.isModelAvailable
+                                             ? Color.white
+                                             : Color.secondary)
                     }
-                    .frame(width: 32)
+                    .buttonStyle(.plain)
+                    .frame(width: 32, height: 32)
                     .help(loc("start_meeting"))
                     .disabled(!SettingsManager.shared.isModelAvailable)
-                    .popover(isPresented: wizardBinding(for: 2), arrowEdge: .bottom) {
+                    .popover(isPresented: wizardBinding(for: 3), arrowEdge: .bottom) {
                         WizardPopoverContent(
-                            step: 2, totalSteps: 3,
+                            step: 3, totalSteps: 5,
                             icon: "pencil.and.list.clipboard",
                             title: loc("wizard_meeting_title"),
                             desc: loc("wizard_meeting_desc"),
+                            onNext: { wizardStep = 4 },
+                            onSkip: finishOnboarding
+                        )
+                    }
+
+                    Button {
+                        batchSelectMode.toggle()
+                        if !batchSelectMode { selectedMeetingIds = [] }
+                    } label: {
+                        Image(systemName: batchSelectMode ? "checkmark.circle.fill" : "checklist")
+                    }
+                    .frame(width: 32, height: 32)
+                    .help(batchSelectMode ? loc("done") : loc("batch_manage"))
+                    .disabled(listVM?.meetings.isEmpty ?? true)
+                    .popover(isPresented: wizardBinding(for: 4), arrowEdge: .bottom) {
+                        WizardPopoverContent(
+                            step: 4, totalSteps: 5,
+                            icon: "checklist",
+                            title: loc("wizard_batch_title"),
+                            desc: loc("wizard_batch_desc"),
                             onNext: {},
                             onSkip: finishOnboarding
                         )
                     }
 
-                    if let vm = listVM, !vm.meetings.isEmpty {
-                        Button {
-                            batchSelectMode.toggle()
-                            if !batchSelectMode { selectedMeetingIds = [] }
-                        } label: {
-                            Image(systemName: batchSelectMode ? "checkmark.circle.fill" : "checklist")
+                    // 语言三态切换按钮：显示当前语言标记
+                    Button {
+                        cycleLanguage()
+                    } label: {
+                        ZStack(alignment: .bottomTrailing) {
+                            Image(systemName: "globe")
+                                .font(.system(size: 15))
+                            Text(langBadge)
+                                .font(.system(size: 7, weight: .bold))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 2)
+                                .background(Capsule().fill(Color.accentColor))
+                                .offset(x: 4, y: 4)
                         }
-                        .frame(width: 32)
-                        .help(batchSelectMode ? loc("done") : loc("batch_manage"))
+                        .frame(width: 32, height: 32)
                     }
+                    .buttonStyle(.plain)
+                    .help("\(loc("follow_system")) / 简体中文 / English  (当前: \(langButtonLabel))")
                 }
             }
             .sheet(isPresented: $recordingVM.showNewMeetingSheet) {
@@ -176,16 +268,10 @@ struct MeetingListView: View {
                     }
                 }
 
-                // 检测已下载的模型版本
+                // 检测已下载的 FunASR 模型版本
                 let s = SettingsManager.shared
-                if s.modelVersion.isEmpty {
-                    let repoPath = URL(fileURLWithPath: s.modelPath)
-                        .appendingPathComponent("models/argmaxinc/whisperkit-coreml").path
-                    let check = URL(fileURLWithPath: repoPath).appendingPathComponent(SettingsManager.supportedModelID)
-                    var isDir: ObjCBool = false
-                    if FileManager.default.fileExists(atPath: check.path, isDirectory: &isDir), isDir.boolValue {
-                        s.modelVersion = SettingsManager.supportedModelID
-                    }
+                if s.modelVersion.isEmpty, s.isModelAvailable {
+                    s.modelVersion = "funasr-v1"
                 }
                 if listVM == nil {
                     listVM = MeetingListViewModel(databaseManager: databaseManager)
@@ -255,7 +341,7 @@ struct MeetingListView: View {
                 Text(loc("voice_model_not_ready")).font(.caption).foregroundStyle(.orange)
             } else {
                 Image(systemName: "checkmark.circle.fill").font(.caption).foregroundStyle(.green)
-                Text("openai/whisper-large-v3 \(loc("model_ready_suffix"))").font(.caption).foregroundStyle(.secondary)
+                Text("FunASR \(loc("model_ready_suffix"))").font(.caption).foregroundStyle(.secondary)
             }
         }
         .padding()

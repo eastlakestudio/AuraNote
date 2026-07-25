@@ -51,7 +51,7 @@ extension DatabaseManager {
             throw DBError.prepareFailed(lastError)
         }
         defer { sqlite3_finalize(stmt) }
-        data.withUnsafeBytes { ptr in
+        _ = data.withUnsafeBytes { ptr in
             sqlite3_bind_blob(stmt, 1, ptr.baseAddress, Int32(data.count), SQLITE_TRANSIENT)
         }
         sqlite3_bind_text(stmt, 2, contactId.cString, -1, SQLITE_TRANSIENT)
@@ -197,7 +197,7 @@ extension DatabaseManager {
             throw DBError.prepareFailed(lastError)
         }
         defer { sqlite3_finalize(stmt) }
-        data.withUnsafeBytes { ptr in
+        _ = data.withUnsafeBytes { ptr in
             sqlite3_bind_blob(stmt, 1, ptr.baseAddress, Int32(data.count), SQLITE_TRANSIENT)
         }
         sqlite3_bind_text(stmt, 2, meetingId.cString, -1, SQLITE_TRANSIENT)

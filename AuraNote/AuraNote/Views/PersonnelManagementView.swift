@@ -48,18 +48,33 @@ struct PersonnelManagementView: View {
     @State private var showBatchDeleteContactsConfirm = false
 
     var body: some View {
-        HStack(spacing: 0) {
-            // 左列：人员列表 + 属性
-            leftColumn
-                .frame(width: 280)
-
+        VStack(alignment: .leading, spacing: 0) {
+            // 头部
+            HStack {
+                Text("参会人管理")
+                    .font(.title2)
+                    .fontWeight(.semibold)
+                Spacer()
+            }
+            .padding()
+            .background(.regularMaterial)
+            
             Divider()
 
-            // 右列：发言记录
-            rightColumn
-                .frame(maxWidth: .infinity)
+            HStack(spacing: 0) {
+                // 左列：人员列表 + 属性
+                leftColumn
+                    .frame(width: 280)
+
+                Divider()
+
+                // 右列：发言记录
+                rightColumn
+                    .frame(maxWidth: .infinity)
+            }
         }
         .background(Color(nsColor: .windowBackgroundColor))
+        .navigationTitle(loc("personnel_management"))
         .onAppear {
             contacts = db.fetchAllContacts()
             embeddingContactIds = Set(db.fetchContactsWithEmbeddings().map { $0.id })

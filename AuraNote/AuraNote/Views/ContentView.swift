@@ -7,18 +7,20 @@ struct ContentView: View {
     @State private var recordingVM: RecordingViewModel?
 
     var body: some View {
-        Group {
-            if let vm = recordingVM {
-                switch vm.meetingStatus {
-                case .idle:
-                    MeetingListView(recordingVM: vm)
-                case .recording:
-                    RecordingView(viewModel: vm)
-                case .reviewing:
-                    ReviewingView(viewModel: vm)
+        NavigationStack {
+            Group {
+                if let vm = recordingVM {
+                    switch vm.meetingStatus {
+                    case .idle:
+                        MeetingListView(recordingVM: vm)
+                    case .recording:
+                        RecordingView(viewModel: vm)
+                    case .reviewing:
+                        ReviewingView(viewModel: vm)
+                    }
+                } else {
+                    ProgressView(loc("initializing"))
                 }
-            } else {
-                ProgressView(loc("initializing"))
             }
         }
         .onAppear {

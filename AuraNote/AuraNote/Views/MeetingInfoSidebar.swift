@@ -14,10 +14,30 @@ struct MeetingInfoSidebar: View {
     @State private var renamePerson = ""
     @State private var showRenameAttendeePopover = false
     @State private var renameTarget = ""
+    @State private var settings = SettingsManager.shared
     @State private var showContactPicker = false
     @State private var attendeeSearchText = ""
     @State private var showNewContactSheet = false
     @State private var showMultiSelectPopover = false
+    @State private var editedHotwordCategories: Set<String> = []
+    @State private var showPresetPicker = false   // 热词词库选择弹窗
+
+    /// 已选热词组数量展示（空格分隔每个组的热词数）
+    private var hotwordCountsDisplay: String {
+        let manager = HotwordPresetsManager.shared
+        var counts: [String] = []
+        for cat in manager.categories {
+            if editedHotwordCategories.contains(cat.id) {
+                counts.append("\(cat.words.count)")
+            }
+        }
+        if editedHotwordCategories.contains("__custom__") {
+            let customStr = SettingsManager.shared.hotwords.trimmingCharacters(in: .whitespaces)
+            let words = customStr.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
+            counts.append("\(words.count)")
+        }
+        return counts.joined(separator: " ")
+    }
 
     var showSpeakerSections: Bool = true
 
@@ -28,13 +48,23 @@ struct MeetingInfoSidebar: View {
 
     private var speakerStats: [(speaker: String, count: Int, duration: Double)] {
         var stats = [String: (count: Int, duration: Double)]()
-        for segment in viewModel.transcriptSegments.filter({ $0.isFinal && !$0.speakerLabel.isEmpty && $0.speakerLabel != "?" }) {
-            let current = stats[segment.speakerLabel] ?? (0, 0.0)
-            let segDur = max(0, segment.endTime - segment.startTime)
-            stats[segment.speakerLabel] = (current.0 + 1, current.1 + segDur)
-        }
-        for person in editedAttendeesList {
-            if stats[person] == nil { stats[person] = (0, 0.0) }
+
+        // 优先从 transcriptSegments 统计（离线回顾模式）
+        let segmentsWithLabels = viewModel.transcriptSegments.filter({ $0.isFinal && !$0.speakerLabel.isEmpty && $0.speakerLabel != "?" })
+        if !segmentsWithLabels.isEmpty {
+            for segment in segmentsWithLabels {
+                let current = stats[segment.speakerLabel] ?? (0, 0.0)
+                let segDur = max(0, segment.endTime - segment.startTime)
+                stats[segment.speakerLabel] = (current.0 + 1, current.1 + segDur)
+            }
+        } else {
+            // 实时录音模式下 transcriptSegments 为空，从 audioChunks 统计
+            for chunk in viewModel.audioChunks {
+                guard let label = chunk.speakerLabel, label != "?", !label.isEmpty else { continue }
+                let current = stats[label] ?? (0, 0.0)
+                let segDur = max(0, chunk.endTime - chunk.startTime)
+                stats[label] = (current.0 + 1, current.1 + segDur)
+            }
         }
         // 按每个 speaker 首次发言时间升序排列
         var firstTimes = [String: Double]()
@@ -42,9 +72,12 @@ struct MeetingInfoSidebar: View {
             let label = segment.speakerLabel
             firstTimes[label] = min(firstTimes[label] ?? Double.greatestFiniteMagnitude, segment.startTime)
         }
-        // 仅在参会人列表中但无发言的排到最后
-        for person in editedAttendeesList {
-            if firstTimes[person] == nil { firstTimes[person] = Double.greatestFiniteMagnitude }
+        // 实时录音：从 audioChunks 补充首次出现时间
+        if firstTimes.isEmpty {
+            for chunk in viewModel.audioChunks {
+                guard let label = chunk.speakerLabel, label != "?", !label.isEmpty else { continue }
+                firstTimes[label] = min(firstTimes[label] ?? Double.greatestFiniteMagnitude, chunk.startTime)
+            }
         }
         return stats.map { ($0.key, $0.value.count, $0.value.duration) }
             .sorted { (firstTimes[$0.0] ?? Double.greatestFiniteMagnitude) < (firstTimes[$1.0] ?? Double.greatestFiniteMagnitude) }
@@ -59,14 +92,16 @@ struct MeetingInfoSidebar: View {
                     startTimeField
                     endTimeField
                     locationField
+                    pickupSensitivityField
+                    hotwordsField
                     attendeeField
                     if showSpeakerSections {
                         speakerStatsSection
                     }
-                }.padding(.trailing, 2)
+                }.padding(.trailing, 4)
             }
         }
-        .padding()
+        .padding(.horizontal, 12).padding(.vertical, 8)
         .background(Color(nsColor: .windowBackgroundColor).opacity(0.5))
         .onAppear { loadMetadata() }
         .onChange(of: viewModel.currentMeeting) { _, _ in loadMetadata() }
@@ -83,6 +118,9 @@ struct MeetingInfoSidebar: View {
                             var list = editedAttendeesList
                             if let idx = list.firstIndex(of: renameTarget) { list[idx] = newName }
                             attendeesString = list.joined(separator: " ")
+                            if filterSpeaker == renameTarget {
+                                filterSpeaker = newName
+                            }
                         }
                         showRenameAttendeePopover = false
                     }.buttonStyle(.borderedProminent)
@@ -122,6 +160,79 @@ struct MeetingInfoSidebar: View {
         VStack(alignment: .leading, spacing: 6) {
             Text(loc("location_label")).font(.caption).foregroundStyle(.secondary)
             TextField(loc("meeting_place"), text: $editedLocation).textFieldStyle(.roundedBorder).onSubmit { saveMetadata() }
+        }
+    }
+    
+    private var pickupSensitivityField: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("拾音灵敏度").font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                // Map 0.05...0.5 to 100...0
+                let percentage = Int((0.5 - settings.vadThreshold) / 0.45 * 100)
+                Text("\(percentage)%").font(.caption).foregroundStyle(.secondary)
+            }
+            Slider(
+                value: Binding(
+                    get: { Double(0.5 - settings.vadThreshold) / 0.45 },
+                    set: { settings.vadThreshold = Float(0.5 - ($0 * 0.45)) }
+                ),
+                in: 0...1
+            )
+            .controlSize(.small)
+            .help("调节会议录音时的拾音灵敏度：向右更灵敏（能拾取小声说话），向左更稳定（过滤环境底噪）。")
+        }
+    }
+
+    private var hotwordsField: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("热词设定").font(.caption).foregroundStyle(.secondary)
+
+            // 行业词库选择——摘要行 + 弹窗
+            Button {
+                showPresetPicker = true
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "text.book.closed")
+                        .font(.caption)
+                        .foregroundStyle(.purple)
+                    if editedHotwordCategories.isEmpty {
+                        Text("预设行业词库：未选择")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text("预设行业词库：\(hotwordCountsDisplay)")
+                            .font(.caption)
+                            .foregroundStyle(.purple)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(editedHotwordCategories.isEmpty
+                              ? Color.primary.opacity(0.05)
+                              : Color.purple.opacity(0.08))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(editedHotwordCategories.isEmpty
+                                ? Color.primary.opacity(0.1)
+                                : Color.purple.opacity(0.25),
+                                lineWidth: 1)
+                )
+            }
+            .buttonStyle(.plain)
+            .sheet(isPresented: $showPresetPicker) {
+                HotwordPresetPickerSheet(
+                    selectedIds: $editedHotwordCategories,
+                    onDismiss: { saveMetadata() }
+                )
+            }
         }
     }
 
@@ -272,6 +383,9 @@ struct MeetingInfoSidebar: View {
                                     ForEach(editedAttendeesList.filter { $0 != item.speaker }, id: \.self) { person in
                                         Button(person) {
                                             viewModel.globalRenameSpeaker(oldName: item.speaker, newName: person)
+                                            if filterSpeaker == item.speaker {
+                                                filterSpeaker = person
+                                            }
                                         }
                                     }
                                 }
@@ -303,6 +417,11 @@ struct MeetingInfoSidebar: View {
             editedLocation = meeting.location ?? ""
             editedCreatedAt = meeting.createdAt
             editedEndedAt = meeting.createdAt.addingTimeInterval(TimeInterval(meeting.duration))
+            if let cats = meeting.hotwordCategories, !cats.isEmpty {
+                editedHotwordCategories = Set(cats.split(separator: ",").map(String.init))
+            } else {
+                editedHotwordCategories = []
+            }
         }
     }
 
@@ -322,9 +441,10 @@ struct MeetingInfoSidebar: View {
         }
         let duration = max(0, Int(editedEndedAt.timeIntervalSince(editedCreatedAt)))
         if updatedAttendees != nil { attendeesString = attendeesStr }
+        let catStr = editedHotwordCategories.isEmpty ? nil : Array(editedHotwordCategories).sorted().joined(separator: ",")
         viewModel.updateMeetingMetadata(
             title: title, location: location, createdAt: editedCreatedAt,
-            attendees: attendeesStr, duration: duration
+            attendees: attendeesStr, hotwordCategories: catStr, duration: duration
         )
     }
 

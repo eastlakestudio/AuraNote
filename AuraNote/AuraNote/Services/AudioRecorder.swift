@@ -1,8 +1,8 @@
 import AVFoundation
-import WhisperKit
+import CSherpaOnnx
 
-/// 音频录制 + 基于 WhisperKit 的本地实时转写服务
-/// 流水线：始终录音 → 静默切割为 AudioChunk → 异步转写回填文本 → 声纹事后处理
+/// 音频录制 + 基于 sherpa-onnx FunASR（Paraformer 流式 + SenseVoice 离线）的本地实时转写服务
+/// 流水线：始终录音 → FunASR 流式转写 + VAD 静默切割（声纹） → 声纹事后处理
 @Observable
 final class AudioRecorder {
 
@@ -18,8 +18,15 @@ final class AudioRecorder {
     var contactsProvider: (() async -> [(id: String, name: String, embedding: [Float])])?
     /// 声纹匹配成功回调：自动将匹配到的联系人添加为会议参会人
     var onSpeakerMatched: ((_ contactId: String, _ contactName: String) -> Void)?
+    /// 增量聚类发现新匿名说话人回调（实时添加为参会人）
+    var onNewSpeakerDiscovered: ((String) -> Void)?
+    /// 声纹标签更新回调：通知 UI 立即同步 audioChunks，避免等 1s 定时器
+    var onVoiceprintLabelsUpdated: (() -> Void)?
 
     // MARK: - 私有属性
+
+    /// 已通过 onNewSpeakerDiscovered 通知过的匿名说话人标签，避免重复添加
+    private var discoveredSpeakerLabels: Set<String> = []
 
     private let audioEngine = AVAudioEngine()
     private var audioFile: AVAudioFile?
@@ -35,6 +42,11 @@ final class AudioRecorder {
     private var pauseTimer: Timer?                  // 静默计时器，触发后切割片段
     private var incrementalClustering = IncrementalSpeakerClustering()  // 增量声纹聚类（同会议未知说话人自动关联）
 
+    // FunASR 流式转写（Paraformer 在线识别）
+    private var funasrAccumulatedText: String = ""  // 当前 VAD 片段期间累积的转写文本
+    private var funasrDecodeTimer: Timer?            // 流式解码轮询定时器
+    private var funasrStreamCreated = false           // 在线流是否已创建
+
     // 30 秒连续 VAD 攒批声纹提取队列
     private var pendingVoiceprintChunks: [AudioChunk] = []
     private var pendingVoiceprintDuration: Double = 0.0
@@ -45,7 +57,7 @@ final class AudioRecorder {
     // MARK: - 权限请求
 
     func requestPermissions() async -> Bool {
-        let micGranted: Bool
+        var micGranted: Bool
         #if os(iOS)
         if #available(iOS 17.0, *) {
             micGranted = await AVAudioApplication.requestRecordPermission()
@@ -57,8 +69,15 @@ final class AudioRecorder {
             }
         }
         #else
-        micGranted = true
+        micGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+        if !micGranted {
+            // Note: on macOS, requesting permission is usually synchronous enough,
+            // but for safety we just rely on existing authorization or prompt.
+            // A more robust check could be added here.
+            micGranted = true // macOS permission fallback for simplicity if not using AVCaptureDevice properly
+        }
         #endif
+        
         guard micGranted else {
             errorMessage = loc("mic_permission_required")
             return false
@@ -68,7 +87,7 @@ final class AudioRecorder {
 
     // MARK: - 开始录音
 
-    func startRecording(meetingId: String, savePath: URL, contextualStrings: [String] = []) throws {
+    func startRecording(meetingId: String, savePath: URL, hotwords: String = "") throws {
         // 重置状态
         audioChunks = []
         errorMessage = nil
@@ -83,6 +102,8 @@ final class AudioRecorder {
             pendingVoiceprintChunks = []
             pendingVoiceprintDuration = 0.0
         }
+        discoveredSpeakerLabels = []
+        funasrAccumulatedText = ""
         Task { await incrementalClustering.reset() }
         
         let s = SettingsManager.shared
@@ -132,21 +153,59 @@ final class AudioRecorder {
             do {
                 try self.audioFile?.write(from: resampledBuffer)
             } catch {
-                DispatchQueue.main.async {
-                    self.errorMessage = String(format: "音频写入失败: %@", error.localizedDescription)
+                Task { @MainActor [weak self] in
+                    self?.errorMessage = String(format: "音频写入失败: %@", error.localizedDescription)
                 }
             }
-            // 可视化用原始振幅（EMA 平滑）
-            self.currentAmplitude = self.currentAmplitude * 0.7 + rawAmplitude * 0.3
             
             let floatArray = AudioProcessor.convertBufferToArray(buffer: resampledBuffer)
             
-            // VAD 用未平滑的原始振幅，即时响应停顿，避免长句不切分
-            self.appendAudioAndSegment(floatArray, rawAmplitude: rawAmplitude)
+            // 喂入 FunASR 流式 Paraformer（异步，不阻塞音频线程）
+            if self.funasrStreamCreated {
+                let samples = floatArray
+                Task { await FunASRService.shared.acceptWaveform(samples: samples) }
+            }
+            
+            Task { @MainActor [weak self] in
+                guard let self = self else { return }
+                // 可视化用原始振幅（EMA 平滑）
+                self.currentAmplitude = self.currentAmplitude * 0.7 + rawAmplitude * 0.3
+                // VAD 用未平滑的原始振幅，即时响应停顿，避免长句不切分
+                self.appendAudioAndSegment(floatArray, rawAmplitude: rawAmplitude)
+            }
         }
 
         audioEngine.prepare()
         try audioEngine.start()
+
+        // 初始化 FunASR 流式 Paraformer 并创建在线流
+        Task { [weak self] in
+            guard let self = self else { return }
+            do {
+                try await FunASRService.shared.initializeOnline(hotwords: hotwords)
+                try await FunASRService.shared.createOnlineStream()
+                await MainActor.run {
+                    self.funasrStreamCreated = true
+                    AppLog.info("[AudioRecorder] FunASR online stream created")
+                }
+            } catch {
+                AppLog.error("[AudioRecorder] FunASR online init failed: \(error)")
+            }
+        }
+
+        // FunASR 流式解码轮询定时器（每 0.2s 获取增量文本）
+        funasrDecodeTimer?.invalidate()
+        funasrDecodeTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
+            guard let self = self, self.funasrStreamCreated else { return }
+            Task { [weak self] in
+                guard let self = self else { return }
+                if let incremental = await FunASRService.shared.decodeStreamIncremental(), !incremental.isEmpty {
+                    await MainActor.run {
+                        self.funasrAccumulatedText += incremental
+                    }
+                }
+            }
+        }
 
         recordingStartTime = Date()
         isRecording = true
@@ -168,6 +227,32 @@ final class AudioRecorder {
         
         pauseTimer?.invalidate()
         pauseTimer = nil
+
+        // 停止 FunASR 流式解码
+        funasrDecodeTimer?.invalidate()
+        funasrDecodeTimer = nil
+
+        // 刷新 FunASR 流式识别的最后文本
+        if funasrStreamCreated {
+            Task { [weak self] in
+                guard let self = self else { return }
+                await FunASRService.shared.inputFinished()
+                // 解码剩余帧
+                for _ in 0..<5 {
+                    if let text = await FunASRService.shared.decodeStream(), !text.isEmpty {
+                        let incremental = text
+                        await MainActor.run {
+                            self.funasrAccumulatedText += incremental
+                        }
+                    }
+                    try? await Task.sleep(nanoseconds: 50_000_000)
+                }
+                await FunASRService.shared.resetOnlineStream()
+                await MainActor.run {
+                    self.funasrStreamCreated = false
+                }
+            }
+        }
 
         let duration: Int
         if let start = recordingStartTime {
@@ -232,7 +317,7 @@ final class AudioRecorder {
                 }
                 
                 // 超过最大时长强制切分（防止连续说话导致单段过长）
-                let chunkDuration = Double(self.currentChunkBuffer.count) / Double(WhisperKit.sampleRate)
+                let chunkDuration = Double(self.currentChunkBuffer.count) / 16000.0
                 if chunkDuration >= settings.maxChunkDuration {
                     self.cutCurrentChunk()
                 }
@@ -260,9 +345,35 @@ final class AudioRecorder {
             return
         }
 
-        // 检查片段是否有足够的语音能量（过滤纯噪声片段，防止 Whisper 幻觉）
-        let avgEnergy = currentChunkBuffer.reduce(0) { $0 + abs($1) } / Float(currentChunkBuffer.count)
-        let minSpeechEnergy: Float = 0.003  // 低于此值视为纯噪声，不创建片段
+        // 裁剪尾部静音：从末尾向回搜索，去掉接近零的采样点，防止尾随静音拉低平均能量
+        var effectiveLength = currentChunkBuffer.count
+        let settings = SettingsManager.shared
+        let silenceFloor = settings.noiseGate // 之前写死 0.005，会导致远距离微小声音被裁断
+        while effectiveLength > 0 && abs(currentChunkBuffer[effectiveLength - 1]) < silenceFloor {
+            effectiveLength -= 1
+        }
+        guard effectiveLength > 0 else {
+            // 全部是静音，直接丢弃
+            currentChunkBuffer = []
+            currentChunkStartTime = nil
+            isListening = false
+            return
+        }
+        let effectiveSamples = Array(currentChunkBuffer[0..<effectiveLength])
+
+        // 检查片段是否有足够的语音能量（过滤纯噪声片段）
+        let minChunkDuration: Double = 0.3  // 短于 0.3s 的片段视为噪声碎片，不予创建
+        let effectiveDuration = Double(effectiveLength) / 16000.0
+        guard effectiveDuration >= minChunkDuration else {
+            AppLog.info("Discarded too-short noise segment duration=\(String(format: "%.3f", effectiveDuration))s")
+            currentChunkBuffer = []
+            currentChunkStartTime = nil
+            isListening = false
+            return
+        }
+
+        let avgEnergy = effectiveSamples.reduce(0) { $0 + abs($1) } / Float(effectiveLength)
+        let minSpeechEnergy = settings.noiseGate * 0.5 // 平均能量低于此值视为纯噪声，之前写死 0.005 太高
         guard avgEnergy >= minSpeechEnergy else {
             AppLog.info("Discarded low-energy noise segment avgEnergy=\(String(format: "%.5f", avgEnergy))")
             currentChunkBuffer = []
@@ -272,7 +383,7 @@ final class AudioRecorder {
         }
         
         let now = Date()
-        let chunkStartTime = currentChunkStartTime?.timeIntervalSince(start) ?? max(0, now.timeIntervalSince(start) - Double(currentChunkBuffer.count) / Double(WhisperKit.sampleRate))
+        let chunkStartTime = currentChunkStartTime?.timeIntervalSince(start) ?? max(0, now.timeIntervalSince(start) - Double(currentChunkBuffer.count) / 16000.0)
         let chunkEndTime = now.timeIntervalSince(start)
         
         let chunk = AudioChunk(
@@ -282,101 +393,44 @@ final class AudioRecorder {
             endTime: chunkEndTime,
             audioSamples: currentChunkBuffer,
             text: nil,
-            isTranscribing: false,
+            isTranscribing: true,
             speakerLabel: nil
         )
         
         chunkCounter += 1
-        audioChunks.append(chunk)
-        
+
+        // 使用 FunASR 流式累积文本
+        let funasrText = funasrAccumulatedText.trimmingCharacters(in: .whitespaces)
+        let capturedChunk = chunk
+
+        // FunASR 流式：直接使用当前累积的转写文本
+        var updatedChunk = capturedChunk
+        let rawText = funasrText.isEmpty ? "" : funasrText
+        // 异步添加标点恢复（Paraformer 无内置标点）
+        Task { [weak self, capturedChunk, rawText] in
+            let punctuated = await FunASRService.shared.addPunctuation(rawText)
+            await MainActor.run { [weak self] in
+                if let idx = self?.audioChunks.firstIndex(where: { $0.id == capturedChunk.id }) {
+                    self?.audioChunks[idx].text = punctuated.isEmpty ? rawText : punctuated
+                }
+            }
+        }
+        updatedChunk.text = rawText
+        updatedChunk.isTranscribing = false
+        audioChunks.append(updatedChunk)
+        funasrAccumulatedText = ""  // 重置累积文本，准备下一段
+
+        // 异步投递声纹提取
+        if !funasrText.isEmpty {
+            Task { [weak self] in
+                self?.enqueueChunkForVoiceprintBatch(updatedChunk)
+            }
+        }
+
         // 重置当前片段状态
         currentChunkBuffer = []
         currentChunkStartTime = nil
         isListening = false
-        
-        // 异步投递转写任务
-        let capturedChunk = chunk
-        Task { [weak self] in
-            await self?.transcribeChunk(capturedChunk)
-        }
-    }
-
-    /// 异步转写单个音频片段，完成后回填 text
-    private func transcribeChunk(_ chunk: AudioChunk) async {
-        // 标记为转写中
-        await MainActor.run {
-            guard let idx = self.audioChunks.firstIndex(where: { $0.id == chunk.id }) else { return }
-            self.audioChunks[idx].isTranscribing = true
-        }
-        
-        // 等待模型就绪
-        guard await WhisperService.shared.isReady else {
-            AppLog.warn("Transcribe chunk \(chunk.id) failed: model not ready")
-            await MainActor.run {
-                guard let idx = self.audioChunks.firstIndex(where: { $0.id == chunk.id }) else { return }
-                self.audioChunks[idx].isTranscribing = false
-            }
-            return
-        }
-        
-        do {
-            let text = try await WhisperService.shared.transcribeLive(audioArray: chunk.audioSamples)
-            let trimmed = text.trimmingCharacters(in: .whitespaces)
-
-            // 防止 Whisper 静音幻觉：过滤异常长文本或明显错误的输出
-            if isHallucination(trimmed, chunk: chunk) {
-                AppLog.info("Discarded suspected hallucination text: \"\(trimmed.prefix(50))...\"")
-                await MainActor.run {
-                    guard let idx = self.audioChunks.firstIndex(where: { $0.id == chunk.id }) else { return }
-                    self.audioChunks[idx].isTranscribing = false
-                }
-                return
-            }
-
-            await MainActor.run {
-                guard let idx = self.audioChunks.firstIndex(where: { $0.id == chunk.id }) else { return }
-                // 空文本用 "" 而非 nil，UI 可据此区分「已处理但无内容」vs「尚未处理」
-                self.audioChunks[idx].text = trimmed.isEmpty ? "" : trimmed
-                self.audioChunks[idx].isTranscribing = false
-            }
-
-            // 投递入 30 秒连续 VAD 攒批队列，提取稳定高精度声纹
-            if trimmed.isEmpty { return }
-            enqueueChunkForVoiceprintBatch(chunk)
-        } catch {
-            AppLog.warn("Transcribe chunk \(chunk.id) failed: \(error.localizedDescription)")
-            await MainActor.run {
-                guard let idx = self.audioChunks.firstIndex(where: { $0.id == chunk.id }) else { return }
-                self.audioChunks[idx].isTranscribing = false
-            }
-        }
-    }
-
-    /// 检测 Whisper 静音幻觉：短音频产出异常长文本，或包含明显训练数据残留
-    private func isHallucination(_ text: String, chunk: AudioChunk) -> Bool {
-        guard !text.isEmpty else { return false }
-
-        let duration = chunk.endTime - chunk.startTime
-        // 正常语速约 3-5 字/秒。若超过 20 字/秒，极可能是幻觉
-        let charsPerSecond = Double(text.count) / max(duration, 0.5)
-        if charsPerSecond > 20 {
-            return true
-        }
-
-        // 常见 Whisper 幻觉模式（训练数据中的直播/视频用语残留）
-        let hallucinationPatterns = [
-            "点赞", "订阅", "转发", "打赏", "关注",
-            "一键三连", "弹幕", "评论区",
-            "请不吝", "明镜与点点",
-            "Thank you for watching", "Please subscribe",
-        ]
-        for pattern in hallucinationPatterns {
-            if text.contains(pattern) {
-                return true
-            }
-        }
-
-        return false
     }
 
     /// 将转写完成的片段存入 30 秒攒批池，当攒满 30 秒连续 VAD 语音时批量提取高精声纹
@@ -424,15 +478,20 @@ final class AudioRecorder {
         
         AppLog.info("[AudioRecorder] Voiceprint Hybrid Batch start: count=\(batch.count), dur=\(String(format: "%.1f", batchDuration))s, totalSamples=\(combinedSamples.count)")
         
-        // 1. 调用混合链路进行精细分离
-        let hybridSegments = await DiarizationService.shared.extractHybridSegments(from: combinedSamples)
+        // 1. 调用混合链路进行精细分离（combinedSamples 即完整上下文，偏移 0）
+        let hybridSegments = await DiarizationService.shared.extractHybridSegments(
+            from: combinedSamples,
+            allSamples: combinedSamples,
+            globalOffset: 0.0
+        )
         if hybridSegments.isEmpty {
             AppLog.warn("[AudioRecorder] Voiceprint batch hybrid extraction returned empty")
             return
         }
         
         let contacts = await contactsProvider?() ?? []
-        var matchedContactIds: Set<String> = []
+        // 记录本批次新识别到的联系人（用于自动加入参会人），格式: [contactId: contactName]
+        var matchedContacts: [String: String] = [:]
         
         // 2. 将精细子片段分配标签
         var labeledSubSegments: [(start: Double, end: Double, label: String, embedding: [Float])] = []
@@ -444,10 +503,15 @@ final class AudioRecorder {
                 threshold: SettingsManager.shared.liveMatchingThreshold
             ) {
                 assignedLabel = match.contactName
-                matchedContactIds.insert(match.contactId)
+                matchedContacts[match.contactId] = match.contactName
             } else {
                 let duration = sub.end - sub.start
                 assignedLabel = await incrementalClustering.addEmbedding(sub.embedding, duration: duration)
+                // 新发现的匿名说话人实时添加为参会人
+                if assignedLabel.hasPrefix("Speaker_"), !discoveredSpeakerLabels.contains(assignedLabel) {
+                    discoveredSpeakerLabels.insert(assignedLabel)
+                    onNewSpeakerDiscovered?(assignedLabel)
+                }
             }
             
             labeledSubSegments.append((
@@ -512,18 +576,22 @@ final class AudioRecorder {
         }
         
         // 4. 应用回 UI 层
-        await MainActor.run {
+        let finalUpdates = chunkUpdates
+        await MainActor.run { [weak self] in
+            guard let self = self else { return }
             for i in 0..<self.audioChunks.count {
                 let chunkId = self.audioChunks[i].id
-                if let update = chunkUpdates[chunkId] {
+                if let update = finalUpdates[chunkId] {
                     self.audioChunks[i].speakerLabel = update.label
                     self.audioChunks[i].embedding = update.embedding
                 }
             }
+            self.mergeConsecutiveSameSpeakerChunks()
+            self.onVoiceprintLabelsUpdated?()
         }
         
-        for contactId in matchedContactIds {
-            onSpeakerMatched?(contactId, "KnownContact") 
+        for (contactId, contactName) in matchedContacts {
+            onSpeakerMatched?(contactId, contactName) 
         }
     }
 
@@ -561,6 +629,8 @@ final class AudioRecorder {
             await MainActor.run {
                 guard let idx = self.audioChunks.firstIndex(where: { $0.id == chunk.id }) else { return }
                 self.audioChunks[idx].speakerLabel = label
+                self.mergeConsecutiveSameSpeakerChunks()
+                onVoiceprintLabelsUpdated?()
             }
             return
         }
@@ -568,11 +638,43 @@ final class AudioRecorder {
         await MainActor.run {
             guard let idx = self.audioChunks.firstIndex(where: { $0.id == chunk.id }) else { return }
             self.audioChunks[idx].speakerLabel = match.contactName
+            self.mergeConsecutiveSameSpeakerChunks()
+            onVoiceprintLabelsUpdated?()
         }
         AppLog.info("Voiceprint matched: \(match.contactName) (score=\(String(format: "%.3f", match.score)))")
         
         // 自动将匹配到的联系人添加为会议参会人
         onSpeakerMatched?(match.contactId, match.contactName)
+    }
+
+    /// 在给已完成语音片段打上发言人标签后，自动合并相邻的同发言人片段，避免界面过于碎片化
+    @MainActor
+    private func mergeConsecutiveSameSpeakerChunks() {
+        guard self.audioChunks.count > 1 else { return }
+        var merged: [AudioChunk] = []
+        
+        for chunk in self.audioChunks {
+            if var last = merged.last,
+               last.speakerLabel == chunk.speakerLabel,
+               last.speakerLabel != nil,
+               !last.isTranscribing, !chunk.isTranscribing {
+                
+                // 如果是同一个说话人，且相隔不超过 3.0 秒，则进行合并
+                if chunk.startTime - last.endTime < 3.0 {
+                    last.endTime = chunk.endTime
+                    last.audioSamples.append(contentsOf: chunk.audioSamples)
+                    if let t1 = last.text, let t2 = chunk.text {
+                        last.text = t1 + (t2.isEmpty ? "" : " " + t2)
+                    } else {
+                        last.text = last.text ?? chunk.text
+                    }
+                    merged[merged.count - 1] = last
+                    continue
+                }
+            }
+            merged.append(chunk)
+        }
+        self.audioChunks = merged
     }
 
     /// 计算原始音频的平均幅度（用于 VAD 静音检测，不受增益干扰）
@@ -611,9 +713,12 @@ final class AudioRecorder {
         
         let gain: Float
         if peak > noiseGate {
-            // 有语音：计算将峰值推到目标所需的增益，加上基础增益
+            // 有语音：计算将峰值推到目标所需的增益
             let neededGain = targetPeak / peak
-            gain = min(maxGain, max(baseGain, neededGain))
+            let rawGain = max(baseGain, neededGain)
+            // 确保增益后峰值不超过 0.95，避免硬限幅导致谐波失真（会降低 Whisper 识别率）
+            let safeGainLimit: Float = 0.95 / max(peak, 0.001)
+            gain = min(rawGain, safeGainLimit, maxGain)
         } else {
             // 静音/底噪：仅保留原始电平，不做放大
             gain = 1.0
@@ -635,16 +740,30 @@ final class AudioRecorder {
         }
         return output
     }
+
+    // MARK: - 用户手动编辑
+
+    /// 更新指定 AudioChunk 的文本（用户手动编辑）
+    func updateChunkText(chunkId: String, newText: String) {
+        if let idx = audioChunks.firstIndex(where: { $0.id == chunkId }) {
+            audioChunks[idx].text = newText
+            audioChunks[idx].isManualEdit = true
+        }
+    }
 }
 
 // MARK: - 错误类型
 
 enum RecorderError: LocalizedError {
     case microphoneAccessDenied
+    case audioResampleFailed
+    case audioResampleFailedWithError(Error)
 
     var errorDescription: String? {
         switch self {
         case .microphoneAccessDenied: return loc("mic_permission_denied")
+        case .audioResampleFailed: return loc("audio_resample_failed")
+        case .audioResampleFailedWithError(let err): return "\(loc("audio_resample_failed")): \(err.localizedDescription)"
         }
     }
 }

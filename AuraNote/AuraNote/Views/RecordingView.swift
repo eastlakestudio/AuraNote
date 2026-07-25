@@ -3,9 +3,11 @@ import SwiftUI
 /// 录音进行中的主界面
 struct RecordingView: View {
     @Bindable var viewModel: RecordingViewModel
-    @State private var showInspector = false
+    @State private var showInspector = true
     @State private var dummyFilter: String? = nil
     @State private var dummyAttendees: String = ""
+    @State private var showDebugLog = false
+    @State private var langRefresh = 0
 
     var body: some View {
         HStack(spacing: 0) {
@@ -23,25 +25,138 @@ struct RecordingView: View {
 
             if showInspector {
                 Divider()
-                MeetingInfoSidebar(viewModel: viewModel, filterSpeaker: $dummyFilter, attendeesString: $dummyAttendees, showSpeakerSections: false)
-                    .frame(width: 260)
-                    .onAppear {
-                        dummyAttendees = viewModel.currentMeeting?.attendees ?? ""
+                VStack(spacing: 0) {
+                    HStack {
+                        Spacer()
+                        Button {
+                            withAnimation { showInspector = false }
+                        } label: {
+                            Image(systemName: "sidebar.left")
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .help("关闭属性面板")
                     }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    MeetingInfoSidebar(viewModel: viewModel, filterSpeaker: $dummyFilter, attendeesString: $dummyAttendees, showSpeakerSections: true)
+                        .onAppear {
+                            dummyAttendees = viewModel.currentMeeting?.attendees ?? ""
+                        }
+                        .onChange(of: viewModel.currentMeeting?.attendees) { _, newValue in
+                            dummyAttendees = newValue ?? ""
+                        }
+                }
+                .frame(width: 260)
             }
         }
         .toolbar {
-            ToolbarItem(placement: .primaryAction) {
+            ToolbarItemGroup(placement: .primaryAction) {
+                // 向导/帮助（新增，不可用——向导是首页功能）
                 Button {
-                    withAnimation { showInspector.toggle() }
                 } label: {
-                    Image(systemName: "sidebar.right")
-                        .foregroundStyle(showInspector ? .purple : .secondary)
+                    Image(systemName: "questionmark.circle")
+                }
+                .frame(width: 32, height: 32)
+                .help(loc("wizard_help"))
+                .disabled(true)
+
+#if DEBUG
+                NavigationLink(destination: DebugLogView()) {
+                    Image(systemName: "ladybug")
                 }
                 .frame(width: 32)
-                .help(loc("meeting_info"))
+                .help(loc("debug_log"))
+#endif
+                NavigationLink(destination: SettingsView()) {
+                    Image(systemName: "gearshape")
+                }
+                .frame(width: 32)
+                .help(loc("settings"))
+
+                // 热词管理（新增）
+                NavigationLink(destination: HotwordsManagementView()) {
+                    Image(systemName: "text.book.closed")
+                }
+                .frame(width: 32)
+                .help(loc("wizard_hotwords_title"))
+
+                NavigationLink(destination: PersonnelManagementView()) {
+                    Image(systemName: "person.2")
+                }
+                .frame(width: 32)
+                .help(loc("personnel_voiceprint_help"))
+
+                // 新建会议（新增，不可用——已在会议中）
+                Button {
+                } label: {
+                    Image(systemName: "plus.circle.fill")
+                        .foregroundStyle(.secondary)
+                }
+                .frame(width: 32)
+                .help(loc("start_meeting"))
+                .disabled(true)
+
+                // 批量管理（新增，不可用——已在会议中）
+                Button {
+                } label: {
+                    Image(systemName: "checklist")
+                }
+                .frame(width: 32)
+                .help(loc("batch_manage"))
+                .disabled(true)
+
+                // 语言切换（新增）
+                Button {
+                    cycleLanguage()
+                } label: {
+                    ZStack(alignment: .bottomTrailing) {
+                        Image(systemName: "globe")
+                            .font(.system(size: 15))
+                        Text(langBadge)
+                            .font(.system(size: 7, weight: .bold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 2)
+                            .background(Capsule().fill(Color.accentColor))
+                            .offset(x: 4, y: 4)
+                    }
+                    .frame(width: 32, height: 32)
+                }
+                .buttonStyle(.plain)
+                .help("\(loc("follow_system")) / 简体中文 / English  (当前: \(langButtonLabel))")
             }
         }
+    }
+
+    // MARK: - 语言切换
+
+    private var langButtonLabel: String {
+        switch SettingsManager.shared.langSetting {
+        case "zh-Hans": return "简体中文"
+        case "en":       return "English"
+        default:         return loc("follow_system")
+        }
+    }
+
+    private var langBadge: String {
+        switch SettingsManager.shared.langSetting {
+        case "zh-Hans": return "中"
+        case "en":       return "EN"
+        default:         return "SYS"
+        }
+    }
+
+    private func cycleLanguage() {
+        let current = SettingsManager.shared.langSetting
+        if current.isEmpty {
+            SettingsManager.shared.langSetting = "zh-Hans"
+        } else if current == "zh-Hans" {
+            SettingsManager.shared.langSetting = "en"
+        } else {
+            SettingsManager.shared.langSetting = ""
+        }
+        SettingsManager.shared.save()
+        langRefresh += 1
     }
 
     // MARK: - 录音状态栏
@@ -81,6 +196,17 @@ struct RecordingView: View {
                         Spacer()
                         Label(location, systemImage: "mappin").font(.caption).foregroundStyle(.tertiary)
                     }
+                    if !showInspector {
+                        Spacer()
+                        Button {
+                            withAnimation { showInspector = true }
+                        } label: {
+                            Image(systemName: "sidebar.right")
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .help(loc("meeting_info"))
+                    }
                 }
             }
         }
@@ -94,9 +220,21 @@ struct RecordingView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 12) {
-                    // 已有切割片段（AudioChunk）
-                    ForEach(viewModel.audioChunks) { chunk in
-                        AudioChunkRow(chunk: chunk)
+                    // 已有切割片段（AudioChunk），过滤空白静音和 Whisper 幻觉碎片
+                    ForEach(viewModel.audioChunks.filter { chunk in
+                        if let filter = dummyFilter, chunk.speakerLabel != filter {
+                            return false
+                        }
+                        if let text = chunk.text {
+                            // 已转写完成：丢弃空白文本和过短幻觉（≤2 字符，如 "嗯" "谢"）
+                            return !text.isEmpty && text.count > 2
+                        }
+                        // text 为 nil：仅保留正在转写中的，丢弃已处理但无结果的（幻觉/错误）
+                        return chunk.isTranscribing
+                    }) { chunk in
+                        AudioChunkRow(chunk: chunk, onTextChange: { newText in
+                            viewModel.updateChunkText(chunkId: chunk.id, newText: newText)
+                        })
                             .id(chunk.id)
                     }
                     
@@ -213,10 +351,10 @@ struct TranscriptBubble: View {
                 }
 
                 if onTextChange != nil {
-                    TextEditor(text: $editedText)
+                    TextField("", text: $editedText, axis: .vertical)
+                        .textFieldStyle(.plain)
                         .font(.body)
                         .lineSpacing(6)
-                        .scrollContentBackground(.hidden)
                         .frame(minHeight: 24)
                         .onChange(of: editedText) { _, newValue in
                             if newValue.contains("\n") {
@@ -323,8 +461,6 @@ struct TranscriptBubble: View {
 /// 实时录音时底部显示的聆听状态气泡，带脉冲动画
 struct ListeningIndicator: View {
     @State private var isPulsing = false
-    @State private var listeningDuration: TimeInterval = 0
-    private let timer = Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()
 
     var body: some View {
         HStack(spacing: 10) {
@@ -350,9 +486,6 @@ struct ListeningIndicator: View {
                 Text("聆听中...")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Text(formatDuration(listeningDuration))
-                    .font(.caption2).monospacedDigit()
-                    .foregroundStyle(.secondary)
             }
         }
         .padding(14)
@@ -368,19 +501,8 @@ struct ListeningIndicator: View {
         .onAppear {
             isPulsing = true
         }
-        .onReceive(timer) { _ in
-            listeningDuration += 0.1
-        }
     }
 
-    private func formatDuration(_ d: TimeInterval) -> String {
-        let mins = Int(d) / 60
-        let secs = Int(d) % 60
-        if mins > 0 {
-            return String(format: "%d:%02d", mins, secs)
-        }
-        return String(format: "%ds", secs)
-    }
 }
 
 // MARK: - 音频片段行
@@ -388,6 +510,13 @@ struct ListeningIndicator: View {
 /// 实时录音时列表中每个音频片段的展示行
 struct AudioChunkRow: View {
     let chunk: AudioChunk
+    var onTextChange: ((String) -> Void)? = nil
+    var onSpeakerChange: ((String) -> Void)? = nil
+
+    @State private var isHovered = false
+    @State private var isEditing = false
+    @State private var editText: String = ""
+    @FocusState private var isTextFieldFocused: Bool
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -396,20 +525,21 @@ struct AudioChunkRow: View {
                 Text(chunk.formattedTime)
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
-                Text(chunk.formattedDuration)
+                Text("→")
                     .font(.caption2)
                     .foregroundStyle(.quaternary)
+                Text(chunk.formattedEndTime)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
             }
             .frame(width: 48, alignment: .leading)
-            .padding(.top, 4)
+            .padding(.top, 2)
 
             VStack(alignment: .leading, spacing: 4) {
-                // 说话人标签（声纹匹配完成后显示）
-                if let speaker = chunk.speakerLabel {
-                    Text(speaker)
-                        .font(.caption).fontWeight(.semibold)
-                        .foregroundStyle(.purple)
-                }
+                // 说话人标签（声纹匹配完成后显示实名，否则显示 ? 或 Speaker_X）
+                Text(chunk.speakerLabel ?? "?")
+                    .font(.caption).fontWeight(.semibold)
+                    .foregroundStyle(chunk.speakerLabel != nil ? .purple : .secondary)
                 if chunk.isTranscribing {
                     // 转写中
                     HStack(spacing: 6) {
@@ -418,6 +548,13 @@ struct AudioChunkRow: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
+                } else if isEditing {
+                    TextField("", text: $editText, axis: .vertical)
+                        .textFieldStyle(.plain)
+                        .font(.body)
+                        .lineSpacing(6)
+                        .focused($isTextFieldFocused)
+                        .onSubmit { commitEdit() }
                 } else if let text = chunk.text, !text.isEmpty {
                     // 转写完成，有实质文本
                     Text(text)
@@ -436,14 +573,60 @@ struct AudioChunkRow: View {
                         .foregroundStyle(.tertiary)
                 }
             }
+
+            Spacer()
+
+            // 编辑按钮（hover 时显示）
+            if isHovered, !chunk.isTranscribing, chunk.text != nil, !(chunk.text?.isEmpty ?? true) {
+                VStack(spacing: 4) {
+                    if !isEditing {
+                        Button {
+                            editText = chunk.text ?? ""
+                            isEditing = true
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                                isTextFieldFocused = true
+                            }
+                        } label: {
+                            Image(systemName: "pencil")
+                                .font(.caption)
+                                .foregroundStyle(.blue.opacity(0.7))
+                        }
+                        .buttonStyle(.plain)
+                        .help("编辑文本")
+                    } else {
+                        Button(action: { commitEdit() }) {
+                            Image(systemName: "checkmark")
+                                .font(.caption)
+                                .foregroundStyle(.green.opacity(0.8))
+                        }
+                        .buttonStyle(.plain)
+                        .help("完成编辑")
+                    }
+                }
+            }
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 8)
-                .fill(chunk.text != nil ? Color.primary.opacity(0.05) : Color.secondary.opacity(0.03))
+                .fill(isHovered ? Color.blue.opacity(0.06) : (chunk.text != nil ? Color.primary.opacity(0.05) : Color.secondary.opacity(0.03)))
         )
+        .overlay(alignment: .leading) {
+            if isHovered {
+                Rectangle().fill(Color.blue.opacity(0.3)).frame(width: 3)
+            }
+        }
+        .onHover { h in withAnimation(.easeInOut(duration: 0.1)) { isHovered = h } }
         .animation(.easeInOut(duration: 0.3), value: chunk.isTranscribing)
         .animation(.easeInOut(duration: 0.3), value: chunk.text)
+    }
+
+    private func commitEdit() {
+        let trimmed = editText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed != chunk.text {
+            onTextChange?(trimmed)
+        }
+        isEditing = false
+        isTextFieldFocused = false
     }
 }

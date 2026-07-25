@@ -46,6 +46,7 @@ actor DiarizationService {
     // MARK: - Diarizer
 
     private var diarizer: SherpaOnnxDiarizer?
+    private var hybridDiarizer: SherpaOnnxDiarizer?
     private var cachedThreshold: Double?
     private var embeddingExtractor: SherpaOnnxEmbeddingExtractor?
 
@@ -100,10 +101,43 @@ actor DiarizationService {
         return ex
     }
 
+    private func getHybridDiarizer() throws -> SherpaOnnxDiarizer {
+        if let d = hybridDiarizer {
+            return d
+        }
+        let segPath = segmentationModelPath()
+        let embPath = embeddingModelPath()
+
+        guard FileManager.default.fileExists(atPath: segPath) else {
+            throw SherpaError.modelNotFound("分割模型: \(segPath)")
+        }
+        guard FileManager.default.fileExists(atPath: embPath) else {
+            throw SherpaError.modelNotFound("声纹模型: \(embPath)")
+        }
+
+        var config = SherpaDiarizationConfig()
+        config.segmentationModel = segPath
+        config.embeddingModel = embPath
+        config.clustering.threshold = 0.1  // 极度严格聚类，只求完美切割
+        config.clustering.numClusters = -1
+        config.minDurationOn = SettingsManager.shared.minDurationOn
+        config.minDurationOff = SettingsManager.shared.minDurationOff
+        config.numThreads = 4
+
+        let d = SherpaOnnxDiarizer()
+        try d.create(config: config)
+        self.hybridDiarizer = d
+
+        AppLog.info("[DiarService] sherpa-onnx hybrid diarizer created (threshold=0.1)")
+        return d
+    }
+
     /// 释放所有 ONNX Runtime 会话，释放 ~500MB-1GB 内存
     func reset() {
         diarizer?.destroy()
         diarizer = nil
+        hybridDiarizer?.destroy()
+        hybridDiarizer = nil
         cachedThreshold = nil
         embeddingExtractor?.destroy()
         embeddingExtractor = nil
@@ -191,9 +225,13 @@ actor DiarizationService {
     }
 
     /// URL 入参重载（从磁盘读取采样数据转接）
-    func diarizeWithEmbeddings(audioURL: URL, onProgress: ((Float) -> Void)? = nil) async throws -> DiarizationOutput {
+    func diarizeWithEmbeddings(
+        audioURL: URL,
+        onProgress: ((Float) -> Void)? = nil,
+        onChunkDiarized: (([DiarizedSegment]) async -> Void)? = nil
+    ) async throws -> DiarizationOutput {
         let samples = try await loadAudioSamples(audioURL)
-        return try await diarizeWithEmbeddings(samples: samples, audioURL: audioURL, onProgress: onProgress)
+        return try await diarizeWithEmbeddings(samples: samples, audioURL: audioURL, onProgress: onProgress, onChunkDiarized: onChunkDiarized)
     }
 
     /// 离线高精声纹分离（sherpa-onnx 内置 Pyannote 3.0 切片 + 0.90 FastClustering HAC 聚类）
@@ -201,7 +239,8 @@ actor DiarizationService {
         samples: [Float],
         audioURL: URL? = nil,
         onProgress: ((Float) -> Void)? = nil,
-        onIncrementalResult: (([DiarizedSegment], [String: [Float]]) async -> Void)? = nil
+        onIncrementalResult: (([DiarizedSegment], [String: [Float]]) async -> Void)? = nil,
+        onChunkDiarized: (([DiarizedSegment]) async -> Void)? = nil
     ) async throws -> DiarizationOutput {
         let startTime = Date()
         let name = audioURL?.lastPathComponent ?? "in-memory-buffer"
@@ -210,8 +249,8 @@ actor DiarizationService {
         let audioDuration = Double(samples.count) / 16000.0
         AppLog.info("[DiarService] audio loaded: \(samples.count) samples @ 16kHz, duration=\(String(format: "%.1f", audioDuration))s")
 
-        // 1. 能量 VAD 粗筛
-        let vadSegments = energyVADSegments(samples: samples)
+        // 1. 能量 VAD 粗筛 (离线文件由于音量不确定，使用极低的阈值防止误删轻音)
+        let vadSegments = energyVADSegments(samples: samples, threshold: 0.002)
         AppLog.info("[DiarService] Energy VAD detected \(vadSegments.count) chunks")
 
         let clustering = IncrementalSpeakerClustering()
@@ -228,14 +267,14 @@ actor DiarizationService {
         var lastLabeledIndex: Int = 0                // labeledSubSegments 已增量处理到的位置
         
         // 预创建 Neural VAD diarizer 并复用（创建 CoreML diarizer 耗时 2-3s，循环外创建一次即可）
-        var hybridDiarizer = SherpaOnnxDiarizer()
+        let hybridDiarizer = SherpaOnnxDiarizer()
         var hybridConfig = SherpaDiarizationConfig()
         hybridConfig.segmentationModel = segmentationModelPath()
         hybridConfig.embeddingModel = embeddingModelPath()
         hybridConfig.clustering.numClusters = -1
         hybridConfig.clustering.threshold = 0.1
-        hybridConfig.minDurationOn = 0.5
-        hybridConfig.minDurationOff = 0.5
+        hybridConfig.minDurationOn = SettingsManager.shared.minDurationOn
+        hybridConfig.minDurationOff = SettingsManager.shared.minDurationOff
         try hybridDiarizer.create(config: hybridConfig)
         
         for (idx, vadSeg) in vadSegments.enumerated() {
@@ -248,21 +287,52 @@ actor DiarizationService {
             
             var chunkSamples = Array(samples[startSample..<endSample])
             
-            // 2. Neural VAD 精细切割与 ERes2Net 声纹提取
-            let hybridSegs = await extractHybridSegments(from: chunkSamples, diarizer: hybridDiarizer)
+            // 2. Neural VAD 精细切割与 ERes2Net 声纹提取（使用完整音频做上下文填充）
+            let hybridSegs = await extractHybridSegments(
+                from: chunkSamples,
+                allSamples: samples,
+                globalOffset: vadSeg.start,
+                diarizer: hybridDiarizer
+            )
             chunkSamples.removeAll()  // 立即释放 chunk 拷贝
             
+            var currentChunkSegments: [DiarizedSegment] = []
             for sub in hybridSegs {
                 let duration = sub.end - sub.start
                 let label = await clustering.addEmbedding(sub.embedding, duration: duration)
                 
                 // 将相对 chunk 的时间轴转换为全局时间轴
+                let globalStart = vadSeg.start + sub.start
+                let globalEnd = vadSeg.start + sub.end
+                
                 labeledSubSegments.append((
-                    start: vadSeg.start + sub.start,
-                    end: vadSeg.start + sub.end,
+                    start: globalStart,
+                    end: globalEnd,
                     label: label,
                     embedding: sub.embedding
                 ))
+                
+                // 允许最多 0.5 秒的同人断点合并，且合并后总长度不超过 30 秒，防止转写超载
+                if let last = currentChunkSegments.last, 
+                   last.speakerId == label, 
+                   globalStart - last.endTime <= 0.5,
+                   globalEnd - last.startTime <= 30.0 {
+                    currentChunkSegments[currentChunkSegments.count - 1] = DiarizedSegment(
+                        speakerId: label,
+                        startTime: last.startTime,
+                        endTime: max(last.endTime, globalEnd)
+                    )
+                } else {
+                    currentChunkSegments.append(DiarizedSegment(
+                        speakerId: label,
+                        startTime: globalStart,
+                        endTime: globalEnd
+                    ))
+                }
+            }
+            
+            if let onChunkDiarized = onChunkDiarized, !currentChunkSegments.isEmpty {
+                await onChunkDiarized(currentChunkSegments)
             }
             
             processedDuration += (vadSeg.end - vadSeg.start)
@@ -385,6 +455,458 @@ actor DiarizationService {
         labeledSubSegments.removeAll()
         
         return DiarizationOutput(segments: outputSegments, embeddings: rawEmbeddings)
+    }
+
+    /// 基于外部给定的句边界进行声纹分离（与转写句边界严格 1:1 对齐）
+    /// - Parameters:
+    ///   - samples: 完整音频采样
+    ///   - boundaries: 句边界数组 (startTime, endTime)，通常来自转录输出
+    ///   - onProgress: 进度回调 0.0~1.0
+    /// - Returns: 声纹分离结果，segments 数量 = boundaries 数量（1:1 对齐）
+    func diarizeWithSentenceBoundaries(
+        samples: [Float],
+        boundaries: [(start: Double, end: Double)],
+        onProgress: ((Float) -> Void)? = nil
+    ) async throws -> DiarizationOutput {
+        let startTime = Date()
+        let audioDuration = Double(samples.count) / 16000.0
+        AppLog.info("[DiarService] Sentence-level diarization: \(boundaries.count) boundaries, \(String(format: "%.1f", audioDuration))s audio")
+
+        let clustering = IncrementalSpeakerClustering()
+        var labeledSegments: [(start: Double, end: Double, label: String, embedding: [Float])] = []
+
+        let ex = try getEmbeddingExtractor()
+        let totalSamples = samples.count
+
+        for (idx, bound) in boundaries.enumerated() {
+            try Task.checkCancellation()
+
+            let startSample = Int(bound.start * 16000)
+            let endSample = min(Int(bound.end * 16000), totalSamples)
+            guard startSample < endSample else { continue }
+
+            // 用 prepareSamplesWithContext 自动填充上下文至 ≥1.6s，
+            // eres2net 需要足够长音频才能提取有意义的声纹向量
+            let segSamples = Self.prepareSamplesWithContext(allSamples: samples, startSec: bound.start, endSec: bound.end)
+            guard let emb = try? ex.extractEmbedding(samples: segSamples, sampleRate: 16000) else {
+                AppLog.info("[DiarService] Sentence-level diar: segment \(idx) [\(String(format: "%.2f", bound.start))s-\(String(format: "%.2f", bound.end))s] embedding failed, skipping")
+                continue
+            }
+
+            let duration = bound.end - bound.start
+            let label = await clustering.addEmbedding(emb, duration: duration)
+
+            labeledSegments.append((start: bound.start, end: bound.end, label: label, embedding: emb))
+
+            onProgress?(Float(idx + 1) / Float(boundaries.count))
+        }
+
+        // 最终合并相似聚类
+        let remap = await clustering.mergeSimilarClusters()
+
+        var segments: [DiarizedSegment] = []
+        for seg in labeledSegments {
+            let finalLabel = remap[seg.label] ?? seg.label
+            segments.append(DiarizedSegment(speakerId: finalLabel, startTime: seg.start, endTime: seg.end))
+        }
+
+        // 计算各说话人平均声纹向量
+        var embeddingSums: [String: [Float]] = [:]
+        var embeddingCounts: [String: Int] = [:]
+        for seg in labeledSegments {
+            let finalLabel = remap[seg.label] ?? seg.label
+            if embeddingSums[finalLabel] == nil {
+                embeddingSums[finalLabel] = seg.embedding
+                embeddingCounts[finalLabel] = 1
+            } else {
+                let dim = seg.embedding.count
+                for j in 0..<dim {
+                    embeddingSums[finalLabel]![j] += seg.embedding[j]
+                }
+                embeddingCounts[finalLabel]! += 1
+            }
+        }
+
+        var avgEmbeddings: [String: [Float]] = [:]
+        for (speaker, sum) in embeddingSums {
+            guard let count = embeddingCounts[speaker], count > 0 else { continue }
+            avgEmbeddings[speaker] = sum.enumerated().map { $0.element / Float(count) }
+        }
+
+        let elapsed = Date().timeIntervalSince(startTime)
+        let uniqueSpeakers = Set(segments.map(\.speakerId))
+        AppLog.info("[DiarService] Sentence-level result: \(uniqueSpeakers.count) speakers, \(segments.count) segments (elapsed: \(String(format: "%.1f", elapsed))s)")
+
+        return DiarizationOutput(segments: segments, embeddings: avgEmbeddings)
+    }
+
+    // MARK: - 说话人切换点切句
+
+    /// 使用独立 VAD 级声纹分离结果，在说话人切换点切分 ASR 句子
+    ///
+    /// 原理：ASR 分句基于语义/标点，不感知说话人变化。当两人在 ASR 一句内快速交替发言时，
+    /// 整句会被错误合并。此函数用 VAD 级声纹分离（pyannote 分割 + 聚类）的说话人切换时间点，
+    /// 将跨说话人的 ASR 句子在切换边界处切开。
+    ///
+    /// - Parameters:
+    ///   - sentences: FunASR 产出的句级片段
+    ///   - diarSegments: diarizeSegmented 产出的 VAD 级声纹分离段（时间精度远高于 ASR 句边界）
+    /// - Returns: 切分并标注好说话人的新句段列表
+    nonisolated func intersectAndLabel(
+        sentences: [TranscriptSegment],
+        diarSegments: [DiarizedSegment]
+    ) -> [TranscriptSegment] {
+        guard !diarSegments.isEmpty else {
+            return sentences.map { seg in
+                var s = seg
+                s.speakerLabel = "?"
+                return s
+            }
+        }
+
+        let sortedDiar = diarSegments.sorted { $0.startTime < $1.startTime }
+        var result: [TranscriptSegment] = []
+
+        for sentence in sentences {
+            // 找到所有与此句子时间重叠的声纹分离段
+            let overlapping = sortedDiar.filter {
+                $0.startTime < sentence.endTime && $0.endTime > sentence.startTime
+            }
+
+            guard !overlapping.isEmpty else {
+                var seg = sentence
+                seg.speakerLabel = "?"
+                result.append(seg)
+                continue
+            }
+
+            // 将连续同说话人的段合并为一个区间
+            var speakerGroups: [(speakerId: String, start: Double, end: Double)] = []
+            for diarSeg in overlapping {
+                let clampedStart = max(diarSeg.startTime, sentence.startTime)
+                let clampedEnd = min(diarSeg.endTime, sentence.endTime)
+                if let last = speakerGroups.last,
+                   last.speakerId == diarSeg.speakerId,
+                   clampedStart <= last.end + 0.1 {
+                    // 同一说话人且时间相近 → 合并
+                    speakerGroups[speakerGroups.count - 1].end = max(last.end, clampedEnd)
+                } else {
+                    speakerGroups.append((speakerId: diarSeg.speakerId, start: clampedStart, end: clampedEnd))
+                }
+            }
+
+            if speakerGroups.count == 1 {
+                // 单说话人：直接标注
+                var seg = sentence
+                seg.speakerLabel = speakerGroups[0].speakerId
+                result.append(seg)
+            } else {
+                // 多说话人：不再切分文本，因为缺乏字级时间戳会导致按比例切分极度不准。
+                // 而是计算哪个说话人在该句子期间重叠时间最长，将其作为主导说话人分配给整个句子。
+                var maxDuration: Double = -1
+                var dominantSpeaker = "?"
+                
+                for group in speakerGroups {
+                    let dur = group.end - group.start
+                    if dur > maxDuration {
+                        maxDuration = dur
+                        dominantSpeaker = group.speakerId
+                    }
+                }
+                
+                AppLog.info("[DiarService] Sentence \(sentence.id) has multiple speakers (\(speakerGroups.count)), assigning to dominant speaker: \(dominantSpeaker)")
+                var seg = sentence
+                seg.speakerLabel = dominantSpeaker
+                result.append(seg)
+            }
+        }
+
+        let splitCount = result.filter { $0.id.contains("_sp") }.count
+        if splitCount > 0 {
+            AppLog.info("[DiarService] intersectAndLabel: \(sentences.count) sentences → \(result.count) segments (\(splitCount) from speaker splits)")
+        }
+        return result
+    }
+
+    /// 用 tokenTimestamps 估算子段的精确 endTime（开始时间 + token 时长）。
+    /// - 句末字符：用 Paraformer 返回的精确 token 时长
+    /// - 非句末字符：找下一个不同时间戳的字符，时间差 ≈ token 时长
+    private nonisolated func computeSubSegmentEnd(
+        ts: [Double],
+        charIdx: Int,
+        lastTokenDuration: Double
+    ) -> Double {
+        let lastIdx = min(ts.count - 1, max(0, charIdx))
+        let lastTs = ts[lastIdx]
+        var estimatedDur: Double
+        if lastIdx == ts.count - 1 {
+            estimatedDur = lastTokenDuration
+        } else {
+            var nextIdx = lastIdx + 1
+            while nextIdx < ts.count && ts[nextIdx] == lastTs { nextIdx += 1 }
+            if nextIdx < ts.count {
+                estimatedDur = min(ts[nextIdx] - lastTs, 2.0)
+            } else {
+                estimatedDur = 0.2
+            }
+        }
+        return lastTs + estimatedDur
+    }
+
+    /// 按时间比例将文本分配到各子段。
+    /// 在标点符号处对齐切分点，使每段文本尽可能对应其时间区间。
+    private nonisolated func splitTextByTimeRatio(
+        _ text: String,
+        segments: [(Double, Double)],
+        sentenceStart: Double,
+        sentenceEnd: Double
+    ) -> [String] {
+        let totalDuration = sentenceEnd - sentenceStart
+        guard totalDuration > 0, !text.isEmpty, segments.count > 1 else {
+            return [text]
+        }
+
+        let chars = Array(text)
+        let totalChars = chars.count
+
+        // 收集所有标点位置
+        let punctSet = Set<Character>(["，", "。", "！", "？", "；", "：", "、", ",", ".", "!", "?"])
+        var punctIndices: [Int] = []
+        for (i, ch) in chars.enumerated() {
+            if punctSet.contains(ch) {
+                punctIndices.append(i)
+            }
+        }
+
+        // 计算每段应得的字符数（按时长比例），预分配避免窄段被吞
+        var charBudgets: [Int] = []
+        for i in 0..<(segments.count - 1) {
+            let dur = segments[i].1 - segments[i].0
+            charBudgets.append(max(1, Int((dur / totalDuration) * Double(totalChars))))
+        }
+        // 最后一段拿剩余
+        let used = charBudgets.reduce(0, +)
+        charBudgets.append(max(1, totalChars - used))
+
+        var result: [String] = []
+        var prevCharIdx = 0
+
+        for i in 0..<(segments.count - 1) {
+            var targetCharIdx = min(prevCharIdx + charBudgets[i], totalChars - 1)
+
+            // 找到最近的标点作为切分点
+            if !punctIndices.isEmpty {
+                var bestPunct = targetCharIdx
+                var bestDist = Int.max
+                for p in punctIndices {
+                    if p <= prevCharIdx { continue }
+                    let dist = abs(p - targetCharIdx)
+                    // 只接受合理距离内的标点（不超过剩余文本的一半）
+                    if dist < bestDist, dist <= (totalChars - prevCharIdx) / 2 {
+                        bestDist = dist
+                        bestPunct = p
+                    }
+                }
+                if bestDist < Int.max {
+                    targetCharIdx = bestPunct
+                }
+            }
+
+            // 确保至少前进一个字符
+            targetCharIdx = max(prevCharIdx, min(targetCharIdx, totalChars - 2))
+
+            let chunk = String(chars[prevCharIdx...targetCharIdx])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            result.append(chunk)
+            prevCharIdx = targetCharIdx + 1
+        }
+
+        // 最后一段取剩余全部文本
+        if prevCharIdx < totalChars {
+            let chunk = String(chars[prevCharIdx...])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            result.append(chunk)
+        } else {
+            result.append("")
+        }
+
+        return result
+    }
+
+    /// 用 Paraformer token 级时间戳精确切分文本，替代按时长比例的盲猜。
+    ///
+    /// 每个字符有独立的音频时间戳（来自 Paraformer 的 tokens_arr + timestamps），
+    /// 在说话人切换边界时间点 B 处，找到时间戳最接近 B 的字符位置，在最近的标点处切开。
+    /// 这样不受语速差异影响——语速快的说话人自然分配到更多字符。
+    ///
+    /// - Parameters:
+    ///   - text: 句子文本
+    ///   - tokenTimestamps: 与 text 字符一一对应的时间戳数组，nil 时退化为 splitTextByTimeRatio
+    ///   - segments: 各说话人段的时间区间
+    ///   - sentenceStart: 原始句起始时间
+    ///   - sentenceEnd: 原始句结束时间
+    /// - Returns: 按说话人切分后的子文本数组
+    private nonisolated func splitTextByTokenTimestamps(
+        _ text: String,
+        tokenTimestamps: [Double]?,
+        segments: [(Double, Double)],
+        sentenceStart: Double,
+        sentenceEnd: Double
+    ) -> [String] {
+        // 无 token 级时间戳 → 回退到时长比例盲猜
+        guard let ts = tokenTimestamps, ts.count == text.count, segments.count > 1 else {
+            return splitTextByTimeRatio(text, segments: segments,
+                                        sentenceStart: sentenceStart, sentenceEnd: sentenceEnd)
+        }
+
+        let chars = Array(text)
+        let punctSet = Set<Character>(["，", "。", "！", "？", "；", "：", "、", ",", ".", "!", "?"])
+        var result: [String] = []
+        var prevCharIdx = 0
+
+        for i in 0..<(segments.count - 1) {
+            // 段 i 与段 i+1 之间的 Pyannote 切换时间点（有 ±200ms 误差）
+            let boundaryTime = segments[i].1
+
+            // 在 Pyannote 边界 ±500ms 内，找 token 时间戳的最大跳变（自然停顿）
+            // 说话人切换通常有短暂停顿，表现为相邻字符时间戳的跳变
+            var splitIdx = prevCharIdx
+            let searchWindow: Double = 0.5
+            var bestGap: Double = 0
+            var bestGapIdx = prevCharIdx
+            for idx in prevCharIdx..<(chars.count - 1) {
+                guard abs(ts[idx] - boundaryTime) <= searchWindow else { continue }
+                let gap = ts[idx + 1] - ts[idx]
+                if gap > bestGap { bestGap = gap; bestGapIdx = idx }
+            }
+            if bestGap > 0.05 {
+                splitIdx = bestGapIdx
+            } else {
+                var bestDist = Double.infinity
+                for idx in prevCharIdx..<chars.count {
+                    let dist = abs(ts[idx] - boundaryTime)
+                    if dist < bestDist { bestDist = dist; splitIdx = idx }
+                }
+            }
+
+            // 在最近的标点处微调
+            let maxAhead = min(chars.count - 1, splitIdx + 5)
+            if let punctPos = (splitIdx...maxAhead).first(where: { punctSet.contains(chars[$0]) }) {
+                splitIdx = punctPos
+            } else {
+                let minBehind = max(0, splitIdx - 3)
+                if let punctPos = (minBehind...splitIdx).reversed().first(where: { punctSet.contains(chars[$0]) }) {
+                    splitIdx = punctPos
+                }
+            }
+
+            // 确保至少前进一个字符
+            splitIdx = max(prevCharIdx, min(splitIdx, chars.count - 2))
+
+            let chunk = String(chars[prevCharIdx...splitIdx])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            result.append(chunk)
+            prevCharIdx = splitIdx + 1
+        }
+
+        // 最后一段取剩余全部文本
+        if prevCharIdx < chars.count {
+            result.append(String(chars[prevCharIdx...])
+                .trimmingCharacters(in: .whitespacesAndNewlines))
+        } else {
+            result.append("")
+        }
+
+        return result
+    }
+
+    /// 二次校验：对已标注但可能漏掉说话人切换的句子，通过比较前半段与后半段的
+    /// 声纹向量来检测被聚类合并的隐藏说话人变化。
+    ///
+    /// 当两个说话人声纹特征相似导致增量聚类将它们合并为同一人时，
+    /// intersectAndLabel 无法切句。此函数对每个已标注句子做句内前后半段声纹对比：
+    /// 若余弦距离 > splitThreshold → 在时间中点强制切开。
+    ///
+    /// - Parameters:
+    ///   - sentences: intersectAndLabel 已标注说话人的句子列表
+    ///   - samples: 完整音频采样（16kHz float32）
+    /// - Returns: 可能被进一步切分的句子列表
+    func refineWithEmbeddingSplit(
+        sentences: [TranscriptSegment],
+        samples: [Float]
+    ) async throws -> [TranscriptSegment] {
+        let ex = try getEmbeddingExtractor()
+        let totalSamples = samples.count
+        let sampleRate = 16000.0
+
+        // 句内前后半段声纹差异阈值（余弦距离 0~2），从系统配置读取
+        let splitThreshold = SettingsManager.shared.embeddingSplitThreshold
+
+        var result: [TranscriptSegment] = []
+        var splitCount = 0
+
+        for sentence in sentences {
+            let duration = sentence.endTime - sentence.startTime
+            // 跳过太短的句子（< 2s → 前后半段各 < 1s，声纹不可靠）
+            guard duration >= 2.0 else {
+                result.append(sentence)
+                continue
+            }
+
+            let midTime = (sentence.startTime + sentence.endTime) / 2.0
+            let firstStart = Int(sentence.startTime * sampleRate)
+            let firstEnd = Int(midTime * sampleRate)
+            let secondStart = firstEnd
+            let secondEnd = min(Int(sentence.endTime * sampleRate), totalSamples)
+
+            guard firstStart < firstEnd, secondStart < secondEnd else {
+                result.append(sentence)
+                continue
+            }
+
+            let firstHalf = Array(samples[firstStart..<firstEnd])
+            let secondHalf = Array(samples[secondStart..<secondEnd])
+
+            guard let emb1 = try? ex.extractEmbedding(samples: firstHalf),
+                  let emb2 = try? ex.extractEmbedding(samples: secondHalf) else {
+                result.append(sentence)
+                continue
+            }
+
+            let dist = cosineDistance(emb1, emb2)
+
+            if dist > splitThreshold {
+                AppLog.info("[DiarService] Embedding discontinuity in \(sentence.id): dist=\(String(format: "%.4f", dist)) > \(String(format: "%.4f", splitThreshold)), assigning to ? instead of splitting")
+
+                var updatedSentence = sentence
+                updatedSentence.speakerLabel = "?"
+                updatedSentence.contactId = nil
+                result.append(updatedSentence)
+
+                splitCount += 1
+            } else {
+                result.append(sentence)
+            }
+        }
+
+        if splitCount > 0 {
+            AppLog.info("[DiarService] refineWithEmbeddingSplit: \(splitCount) sentence(s) split by embedding discontinuity")
+        }
+        return result
+    }
+
+    /// 余弦距离（0~2），与 sherpa-onnx FastClustering 语义一致，distance = 1 - cos_sim
+    private func cosineDistance(_ a: [Float], _ b: [Float]) -> Float {
+        guard a.count == b.count, !a.isEmpty else { return 2 }
+        var dot: Float = 0, magA: Float = 0, magB: Float = 0
+        for i in 0..<a.count {
+            dot += a[i] * b[i]
+            magA += a[i] * a[i]
+            magB += b[i] * b[i]
+        }
+        let den = sqrt(magA) * sqrt(magB)
+        let sim = den > 0 ? max(-1, min(1, dot / den)) : 0
+        return max(0, min(2, 1 - sim))
     }
 
     private func buildDiarizationOutput(
@@ -614,10 +1136,15 @@ actor DiarizationService {
     /// 基于振幅的能量 VAD 切段，与实时录音共用同一阈值体系。
     /// 扫描全部采样，按 silenceThreshold + pauseWindow 检测语音边界。
     /// 时间复杂度 O(n)，11 分钟音频约 0.01 秒完成。
-    func energyVADSegments(samples: [Float]) -> [(start: Double, end: Double)] {
+    /// - Parameter pauseWindow: 静音持续多久算作段落边界（秒），默认使用 SettingsManager 配置值
+    nonisolated func energyVADSegments(
+        samples: [Float],
+        pauseWindow: Double? = nil,
+        threshold: Float? = nil
+    ) -> [(start: Double, end: Double)] {
         let s = SettingsManager.shared
-        let silenceThreshold: Float = s.silenceThreshold      // 0.02
-        let pauseWindow: Double = s.pauseWindow                 // 1.0s
+        let silenceThreshold: Float = threshold ?? s.silenceThreshold
+        let effectivePauseWindow = pauseWindow ?? s.pauseWindow
         let minSpeechOnset: Double = 0.3  // 最短有效语音段（秒），过滤瞬时噪声
         let maxChunkDuration: Double = s.maxChunkDuration       // 8.0s
         let sampleRate = 16000
@@ -661,7 +1188,7 @@ actor DiarizationService {
                 if inSpeech {
                     silenceSampleCount += (end - i)
                     let silenceDuration = Double(silenceSampleCount) / Double(sampleRate)
-                    if silenceDuration >= pauseWindow {
+                    if silenceDuration >= effectivePauseWindow {
                         // 停顿足够长，切割当前段
                         let segStart = Double(speechStartSample) / Double(sampleRate)
                         let segEnd = Double(lastSpeechSample) / Double(sampleRate)
@@ -1028,8 +1555,17 @@ actor DiarizationService {
     
     /// [Hybrid Diarization 专用]
     /// 针对一整段连续音频（通常为外层能量 VAD 切割出的大段），内部使用极端严格的 Neural VAD (threshold=0.1) 提取纯净子片段。
-    /// 针对每一个子片段 (>0.3s) 独立提取 eres2net 高精声纹。
-    func extractHybridSegments(from samples: [Float], diarizer: SherpaOnnxDiarizer? = nil) async -> [(start: Double, end: Double, embedding: [Float])] {
+    /// 针对每一个子片段 (>0.3s) 使用上下文填充（≥1.6s）后提取 eres2net 高精声纹。
+    /// - Parameters:
+    ///   - chunkSamples: 外层能量VAD切割出的单段音频
+    ///   - allSamples: 完整音频采样（用于上下文填充）
+    ///   - globalOffset: chunk 在完整音频中的起始时间（秒）
+    func extractHybridSegments(
+        from chunkSamples: [Float],
+        allSamples: [Float],
+        globalOffset: Double,
+        diarizer: SherpaOnnxDiarizer? = nil
+    ) async -> [(start: Double, end: Double, embedding: [Float])] {
         let segPath = segmentationModelPath()
         let embPath = embeddingModelPath()
         
@@ -1039,43 +1575,36 @@ actor DiarizationService {
         }
         
         do {
-            // 内部配置：极度严格聚类，只求完美切割
-            var config = SherpaDiarizationConfig()
-            config.segmentationModel = segPath
-            config.embeddingModel = embPath
-            config.clustering.numClusters = -1
-            config.clustering.threshold = 0.1
-            config.minDurationOn = 0.5
-            config.minDurationOff = 0.5
-            
             let effectiveDiarizer: SherpaOnnxDiarizer
             if let diarizer = diarizer {
                 effectiveDiarizer = diarizer
             } else {
-                let tempDiarizer = SherpaOnnxDiarizer()
-                try tempDiarizer.create(config: config)
-                effectiveDiarizer = tempDiarizer
+                effectiveDiarizer = try getHybridDiarizer()
             }
             
-            // 提取 Neural VAD 片段
-            let processResult = try effectiveDiarizer.process(samples: samples)
+            // 提取 Neural VAD 片段（在 chunk 上运行）
+            let processResult = try effectiveDiarizer.process(samples: chunkSamples)
             let segments = processResult.segments
             
             // 复用 actor 级缓存的声纹提取器（单会话，避免重复创建 ONNX 会话导致内存泄漏）
             let ex = try getEmbeddingExtractor()
             
             var result: [(start: Double, end: Double, embedding: [Float])] = []
-            let totalSamples = samples.count
             
             for seg in segments {
-                let startSample = Int(seg.start * 16000)
-                let endSample = min(Int(seg.end * 16000), totalSamples)
-                guard startSample < endSample else { continue }
                 let duration = seg.end - seg.start
                 if duration < 0.3 { continue } // 过滤过短无意义片段
                 
-                let subSamples = Array(samples[startSample..<endSample])
-                if let emb = try? ex.extractEmbedding(samples: subSamples) {
+                // 用 prepareSamplesWithContext 从完整音频中提取上下文填充后的采样（≥1.6s），
+                // eres2net 需要足够长音频才能提取有意义的声纹向量
+                let globalStart = globalOffset + Double(seg.start)
+                let globalEnd = globalOffset + Double(seg.end)
+                let ctxSamples = Self.prepareSamplesWithContext(
+                    allSamples: allSamples,
+                    startSec: globalStart,
+                    endSec: globalEnd
+                )
+                if let emb = try? ex.extractEmbedding(samples: ctxSamples, sampleRate: 16000) {
                     result.append((start: Double(seg.start), end: Double(seg.end), embedding: emb))
                 }
             }

@@ -1,0 +1,74 @@
+[
+  {
+    "id": "general_business",
+    "name": "通用办公 (General Business)",
+    "words": [
+      "赋能", "对齐", "抓手", "闭环", "颗粒度", "痛点", "护城河", "差异化", "核心竞争力", "复盘", "打法", "矩阵", "沉淀", "生态",
+      "KPI", "OKR", "Kick-off", "Brainstorming", "Milestone", "Roadmap", "Synergy", "Alignment"
+    ]
+  },
+  {
+    "id": "it_software",
+    "name": "计算机信息 (IT & Software)",
+    "words": [
+      "大模型", "云计算", "微服务", "敏捷开发", "持续集成", "Kubernetes", "并发", "负载均衡", "人工智能", "算法", "数据结构", "架构", "容器化", "前端", "后端",
+      "LLM", "Cloud Computing", "Microservices", "Agile", "CI/CD", "Concurrency", "Load Balancing", "AI", "Algorithm", "Architecture", "Containerization", "Frontend", "Backend"
+    ]
+  },
+  {
+    "id": "medical",
+    "name": "医疗健康 (Medical & Health)",
+    "words": [
+      "心血管", "抗生素", "核磁共振", "靶向药", "临床试验", "并发症", "静脉注射", "微创手术", "病理分析", "医保", "处方", "免疫", "疫苗",
+      "Cardiovascular", "Antibiotics", "MRI", "Targeted Therapy", "Clinical Trials", "Complications", "Intravenous", "Minimally Invasive", "Pathology", "Insurance", "Prescription", "Immunity", "Vaccine"
+    ]
+  },
+  {
+    "id": "finance",
+    "name": "金融经济 (Finance & Economy)",
+    "words": [
+      "区块链", "去中心化", "市盈率", "资产负债表", "宏观调控", "通货膨胀", "量化宽松", "基金", "股票", "债券", "对冲", "做空", "做多", "净值",
+      "Blockchain", "Decentralization", "P/E Ratio", "Balance Sheet", "Macroeconomics", "Inflation", "Quantitative Easing", "Mutual Fund", "Stock", "Bonds", "Hedge", "Shorting", "Long Position", "Net Value"
+    ]
+  },
+  {
+    "id": "business_marketing",
+    "name": "商业营销 (Business & Marketing)",
+    "words": [
+      "融媒体", "舆情分析", "自媒体", "流量池", "内容矩阵", "文案", "主编", "排版", "品牌矩阵", "私域流量", "公域流量", "转化率",
+      "Media Convergence", "Sentiment Analysis", "Self-Media", "Traffic Pool", "Content Matrix", "Copywriting", "Editor in Chief", "Layout", "Brand Matrix", "Private Domain Traffic", "Public Domain Traffic", "Conversion Rate"
+    ]
+  },
+  {
+    "id": "legal",
+    "name": "法律咨询 (Legal Consultation)",
+    "words": [
+      "知识产权", "劳动仲裁", "违约责任", "不可抗力", "诉讼时效", "取保候审", "管辖权", "尽职调查", "股权分配", "合规",
+      "Intellectual Property", "Labor Arbitration", "Breach of Contract", "Force Majeure", "Statute of Limitations", "Bail", "Jurisdiction", "Due Diligence", "Equity Distribution", "Compliance"
+    ]
+  },
+  {
+    "id": "chemical_energy",
+    "name": "化工能源 (Chemical & Energy)",
+    "words": [
+      "催化剂", "高分子", "聚合物", "碳中和", "碳达峰", "聚合反应", "精细化工", "煤化工", "乙烯", "丙烯", "可再生能源", "光伏",
+      "Catalyst", "Polymer", "Carbon Neutrality", "Carbon Peak", "Polymerization", "Fine Chemicals", "Coal Chemical", "Ethylene", "Propylene", "Renewable Energy", "Photovoltaic"
+    ]
+  },
+  {
+    "id": "telecommunications",
+    "name": "通信电子 (Telecommunications)",
+    "words": [
+      "宽带", "频谱", "基站", "路由器", "交换机", "光纤", "核心网", "射频", "物联网", "半导体", "芯片", "晶圆", "光刻机",
+      "Broadband", "Spectrum", "Base Station", "Router", "Switch", "Optical Fiber", "Core Network", "RF", "IoT", "Semiconductor", "Chip", "Wafer", "Lithography"
+    ]
+  },
+  {
+    "id": "education",
+    "name": "教育培训 (Education & Training)",
+    "words": [
+      "素质教育", "职业教育", "产教融合", "翻转课堂", "慕课", "留存率", "完课率", "因材施教", "教研", "双减", "学分", "大纲",
+      "K12", "Vocational Education", "Flipped Classroom", "MOOC", "Retention Rate", "Completion Rate", "Teaching Research", "Credit", "Syllabus"
+    ]
+  }
+]

@@ -14,6 +14,7 @@ struct Meeting: Identifiable, Codable, Hashable {
     var createdAt: Date
     var updatedAt: Date
     var attendees: String? // 新增：空格分隔的参会人姓名列表
+    var hotwordCategories: String? // 逗号分隔的分类 ID
 
     enum Status: String, Codable, CaseIterable {
         case recording
@@ -183,12 +184,32 @@ struct TranscriptSegment: Identifiable, Hashable {
     var speakerLabel: String
     var contactId: String?
     var isFinal: Bool       // 是否为最终结果（非中间识别）
+    var isManualEdit: Bool = false // 是否为用户手动修改过标签
     var isPlaceholder: Bool = false  // 是否为占位段（等待离线转写回填）
+    /// Paraformer token 级时间戳，与 text 字符一一对应。
+    /// `tokenTimestamps[i]` = text 第 i 个字符对应的音频时间（秒）。
+    /// 标点字符（，。！？等）无独立时间戳，取最近非标点字符的时间戳。
+    /// nil 表示无 token 级时间戳（回退模式），此时 DiarizationService 退化为按时长比例分本。
+    var tokenTimestamps: [Double]? = nil
+    /// 最后一个 token 的时长（秒），用于计算 sub-segment 的精确 endTime。
+    /// 仅在 tokenTimestamps 非 nil 时有效。
+    var lastTokenDuration: Double = 0.3
 
     var formattedTime: String {
         let mins = Int(startTime) / 60
         let secs = Int(startTime) % 60
         return String(format: "%02d:%02d", mins, secs)
+    }
+
+    var formattedEndTime: String {
+        let mins = Int(endTime) / 60
+        let secs = Int(endTime) % 60
+        return String(format: "%02d:%02d", mins, secs)
+    }
+
+    /// 起止时间范围，如 "[00:05→00:12]"
+    var formattedTimeRange: String {
+        "[\(formattedTime)→\(formattedEndTime)]"
     }
 }
 
@@ -197,18 +218,25 @@ struct TranscriptSegment: Identifiable, Hashable {
 struct AudioChunk: Identifiable, Sendable {
     let id: String
     let meetingId: String
-    let startTime: Double
-    let endTime: Double
-    let audioSamples: [Float]
+    var startTime: Double
+    var endTime: Double
+    var audioSamples: [Float]
     var text: String?
     var isTranscribing: Bool
     var speakerLabel: String?
+    var isManualEdit: Bool = false
     /// 实时录音阶段提取的声纹向量，供离线分析回退复用
     var embedding: [Float]?
 
     var formattedTime: String {
         let mins = Int(startTime) / 60
         let secs = Int(startTime) % 60
+        return String(format: "%02d:%02d", mins, secs)
+    }
+
+    var formattedEndTime: String {
+        let mins = Int(endTime) / 60
+        let secs = Int(endTime) % 60
         return String(format: "%02d:%02d", mins, secs)
     }
 

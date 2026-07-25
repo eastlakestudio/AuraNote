@@ -86,26 +86,29 @@ final class SherpaOnnxDiarizer {
                             embConfig.model = embModelPath
                             embConfig.num_threads = min(config.numThreads, 2)
                             embConfig.debug = 0
-                            embConfig.provider = providerCStr
-                            cConfig.embedding = embConfig
-
-                            // clustering
-                            var clustConfig = SherpaOnnxFastClusteringConfig()
-                            clustConfig.num_clusters = config.clustering.numClusters
-                            clustConfig.threshold = config.clustering.threshold
-                            cConfig.clustering = clustConfig
-
-                            // durations
-                            cConfig.min_duration_on = config.minDurationOn
-                            cConfig.min_duration_off = config.minDurationOff
-
-                            guard let sd = SherpaOnnxCreateOfflineSpeakerDiarization(&cConfig) else {
-                                throw SherpaError.initializationFailed("创建分离器失败 (provider=\(provider))")
+                            
+                            try "cpu".withCString { cpuProviderCStr in
+                                embConfig.provider = cpuProviderCStr
+                                cConfig.embedding = embConfig
+                                
+                                // clustering
+                                var clustConfig = SherpaOnnxFastClusteringConfig()
+                                clustConfig.num_clusters = config.clustering.numClusters
+                                clustConfig.threshold = config.clustering.threshold
+                                cConfig.clustering = clustConfig
+                                
+                                // durations
+                                cConfig.min_duration_on = config.minDurationOn
+                                cConfig.min_duration_off = config.minDurationOff
+                                
+                                guard let sd = SherpaOnnxCreateOfflineSpeakerDiarization(&cConfig) else {
+                                    throw SherpaError.initializationFailed("创建分离器失败 (provider=\(provider))")
+                                }
+                                
+                                self.handle = sd
+                                self.sampleRate = SherpaOnnxOfflineSpeakerDiarizationGetSampleRate(sd)
+                                AppLog.info("[SherpaOnnx] diarizer created with provider=\(provider) (embedding=cpu)")
                             }
-
-                            self.handle = sd
-                            self.sampleRate = SherpaOnnxOfflineSpeakerDiarizationGetSampleRate(sd)
-                            AppLog.info("[SherpaOnnx] diarizer created with provider=\(provider)")
                         }
                         return  // 成功，跳出循环
                     } catch {

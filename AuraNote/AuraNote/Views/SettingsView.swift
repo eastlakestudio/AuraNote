@@ -1,5 +1,4 @@
 import SwiftUI
-import WhisperKit
 
 // MARK: - 国际化
 func loc(_ key: String) -> String {
@@ -11,10 +10,10 @@ let zhLocale: [String: String] = [
     "settings": "系统配置", "save": "保存",
     "speech_model": "语音识别模型", "downloaded": "已下载", "model_label": "模型", "redownload_hint": "点击重新下载模型", "redownload_confirm_title": "重新下载模型", "redownload_confirm_msg": "重新下载将覆盖现有模型文件，需重新从网络下载约 1.6 GB 数据。确定要继续吗？", "redownload_confirm_ok": "重新下载",
     "china_mirror": "HF-Mirror", "huggingface": "HuggingFace",
-    "about_desc": "本地离线会议纪要系统  |  WhisperKit + sherpa-onnx",
+    "about_desc": "本地离线会议纪要系统  |  FunASR + sherpa-onnx",
     "about_copyright": "© 2026 Eastlake Studio. 保留所有权利。",
-    "about_feature_desc": "听纪是一款完全本地离线运行的智能会议纪要系统。\n基于 WhisperKit 语音识别引擎与 sherpa-onnx 声纹分离技术，\n支持实时录音转写、离线高精度转写、多说话人声纹分离与匹配。\n所有音频数据均在本地处理，无需联网，保障隐私安全。",
-    "about_feature_desc_en": "AuraNote is a fully offline intelligent meeting minutes system.\nPowered by WhisperKit speech recognition and sherpa-onnx voiceprint diarization,\nit supports real-time transcription, offline high-accuracy transcription,\nand multi-speaker voiceprint separation & matching.\nAll audio data is processed locally — no internet required, ensuring complete privacy.",
+    "about_feature_desc": "听纪是一款完全本地离线运行的智能会议纪要系统。\n基于 FunASR 语音识别引擎与 sherpa-onnx 声纹分离技术，\n支持实时录音转写、离线高精度转写、多说话人声纹分离与匹配。\n所有音频数据均在本地处理，无需联网，保障隐私安全。",
+    "about_feature_desc_en": "AuraNote is a fully offline intelligent meeting minutes system.\nPowered by FunASR speech recognition and sherpa-onnx voiceprint diarization,\nit supports real-time transcription, offline high-accuracy transcription,\nand multi-speaker voiceprint separation & matching.\nAll audio data is processed locally — no internet required, ensuring complete privacy.",
     "copyright": "© 2026 Eastlake Studio",
     "model_name": "模型名称",
     "zhipu": "智谱AI",
@@ -42,11 +41,12 @@ let zhLocale: [String: String] = [
     "app_title": "听纪",
     "personnel_voiceprint": "人员与声纹",
     "personnel_voiceprint_help": "全局人员与声纹管理",
-    "start_meeting": "开始会议",
+    "personnel_management": "参会人管理",
+    "start_meeting": "创建会议",
     "permission_insufficient": "权限不足",
     "confirm": "确定",
     "no_meetings": "暂无会议记录",
-    "start_meeting_hint": "点击右上角「开始会议」选择录音模式",
+    "start_meeting_hint": "点击右上角「创建会议」选择录音模式",
     "delete_meeting": "删除会议",
     "save_recording": "另存录音文件",
     "status_recording": "录音中",
@@ -249,9 +249,19 @@ let zhLocale: [String: String] = [
     "target_peak_desc": "有语音时的目标电平 (-3dBFS)",
     "max_gain": "最大增益",
     "max_gain_desc": "语音增强的最大放大倍数",
+    
+    // 模型状态
+    "model_online_label": "流式转写: ",
+    "model_offline_label": "离线高精度: ",
+    "model_punct_label": "标点恢复: ",
+    "model_ready": "已就绪",
+    "model_not_found": "未找到",
+    "model_built_in_hint": "核心语音模型已内置于应用中，无需额外下载",
     "base_gain": "基础增益",
     "base_gain_desc": "中高电平语音的基础增益",
     "vad_params": "语音活动检测",
+    "vad_threshold": "VAD 阈值",
+    "vad_threshold_desc": "Silero VAD 语音检测阈值 (0.05~0.5)：越低越敏感，能检测到更微弱的声音",
     "voice_segmentation": "语音分段与转写",
     "speaker_recognition": "声纹处理",
     "speaker_diarization": "声纹分离",
@@ -272,6 +282,8 @@ let zhLocale: [String: String] = [
     "min_duration_on_desc": "sherpa-onnx 声纹分离的最短语音段时长（秒），太短会产生碎段",
     "min_duration_off": "最小静音间隔",
     "min_duration_off_desc": "sherpa-onnx 声纹分离的最小静音间隔（秒），更小 = 更精细的切分",
+    "embedding_split_threshold": "句内拆分阈值",
+    "embedding_split_threshold_desc": "句内前后半段声纹余弦距离阈值（0~2），低于此值触发说话人切换拆分",
     "consumer_poll_interval": "消费轮询间隔",
     "consumer_poll_interval_desc": "离线转写消费者从队列取数据的间隔",
     "max_chunk_duration": "最大片段时长",
@@ -312,22 +324,57 @@ let zhLocale: [String: String] = [
     "wizard_personnel_desc": "管理参会人员信息与声纹特征，系统将自动识别历史说话人并绑定到对应联系人。",
     "wizard_meeting_title": "创建会议",
     "wizard_meeting_desc": "开始实时录音或导入音频文件，听纪将自动完成转写、声纹分离与说话人匹配。",
+    "wizard_hotwords_title": "热词管理",
+    "wizard_hotwords_desc": "配置全局生效的自定义热词及权重，提升特定专业词汇的识别准确率。",
+    "wizard_batch_title": "会议管理",
+    "wizard_batch_desc": "批量管理所有会议记录，可进行多选删除或导出操作。",
     "wizard_next": "下一步",
     "wizard_help_title": "使用帮助",
     "wizard_help_desc": "此处可随时重新打开本引导。下方按钮依次为：系统设置、人员管理、创建会议。",
     "wizard_help": "使用帮助",
     "skip": "跳过",
     "start_using": "开始使用",
+    
+    // 语言与热词设定
+    "ui_language_setting": "界面语言",
+    "ui_language_desc": "切换应用显示的语言，重启后可能需要部分刷新生效。",
+    "hotwords_management": "全局热词管理",
+    "global_custom_hotwords": "自定义热词",
+    "global_custom_hotwords_desc": "输入需要全局生效的热词（如人名、公司名、项目代号等），多个词用空格隔开。",
+    "hotwords_weight": "热词生效权重",
+    "hotwords_weight_desc": "增大权重可强制模型输出热词，但过高可能导致语法不通畅。",
+    "current_weight": "当前权重: %.1f",
+    
+    "hotwords_settings": "热词设定",
+    "global_custom_hotwords_hint": "全局自定义热词 (多个词用空格隔开)",
+    "global_custom_hotwords_help": "这里输入的热词全局生效，会应用到所有的录音识别中。",
+    "preset_industry_hotwords": "热词分组",
+    
+    // 行业词库管理
+    "industry_hotwords_management": "热词分组管理",
+    "add_industry": "添加分组",
+    "industry_name": "分组名称",
+    "industry_words": "热词（空格分隔）",
+    "add": "添加",
+
+    // 声纹分离策略区
+    "funasr_engine_title": "FunASR 语音识别引擎",
+    "diarization_strategy_title": "声纹分离策略",
+    "diarization_strategy_hint": "选择适合当前会议的声纹识别模式：",
+    "preset_strict": "更多人 (严格分离)",
+    "preset_balanced": "适中 (智能推荐)",
+    "preset_aggressive": "更少人 (激进合并)",
+    "advanced_settings": "高级设置",
 ] 
 let enLocale: [String: String] = [
     "settings": "Settings", "save": "Save",
     "speech_model": "Speech Recognition", "downloaded": "Downloaded",
     "cache": "Cache", "model_label": "Model", "redownload_hint": "Click to re-download", "redownload_confirm_title": "Re-download Model", "redownload_confirm_msg": "This will overwrite the existing model and re-download ~1.6 GB from the network. Are you sure you want to continue?", "redownload_confirm_ok": "Re-download",
     "china_mirror": "HF-Mirror", "huggingface": "HuggingFace",
-    "about_desc": "Offline Meeting Minutes  |  WhisperKit + sherpa-onnx",
+    "about_desc": "Offline Meeting Minutes  |  FunASR + sherpa-onnx",
     "about_copyright": "© 2026 Eastlake Studio. All rights reserved.",
-    "about_feature_desc": "AuraNote is a fully offline intelligent meeting minutes system.\nPowered by WhisperKit speech recognition and sherpa-onnx voiceprint diarization,\nit supports real-time transcription, offline high-accuracy transcription,\nand multi-speaker voiceprint separation & matching.\nAll audio data is processed locally — no internet required, ensuring complete privacy.",
-    "about_feature_desc_en": "AuraNote is a fully offline intelligent meeting minutes system.\nPowered by WhisperKit speech recognition and sherpa-onnx voiceprint diarization,\nit supports real-time transcription, offline high-accuracy transcription,\nand multi-speaker voiceprint separation & matching.\nAll audio data is processed locally — no internet required, ensuring complete privacy.",
+    "about_feature_desc": "AuraNote is a fully offline intelligent meeting minutes system.\nPowered by FunASR speech recognition and sherpa-onnx voiceprint diarization,\nit supports real-time transcription, offline high-accuracy transcription,\nand multi-speaker voiceprint separation & matching.\nAll audio data is processed locally — no internet required, ensuring complete privacy.",
+    "about_feature_desc_en": "AuraNote is a fully offline intelligent meeting minutes system.\nPowered by FunASR speech recognition and sherpa-onnx voiceprint diarization,\nit supports real-time transcription, offline high-accuracy transcription,\nand multi-speaker voiceprint separation & matching.\nAll audio data is processed locally — no internet required, ensuring complete privacy.",
     "copyright": "© 2026 Eastlake Studio",
     "model_name": "Model Name",
     "zhipu": "Zhipu AI",
@@ -355,11 +402,12 @@ let enLocale: [String: String] = [
     "app_title": "AuraNote",
     "personnel_voiceprint": "Personnel & Voiceprint",
     "personnel_voiceprint_help": "Global personnel and voiceprint management",
-    "start_meeting": "Start Meeting",
+    "personnel_management": "Attendee Management",
+    "start_meeting": "Create Meeting",
     "permission_insufficient": "Insufficient Permissions",
     "confirm": "OK",
     "no_meetings": "No meetings yet",
-    "start_meeting_hint": "Click 'Start Meeting' in the top right to choose a recording mode",
+    "start_meeting_hint": "Click 'Create Meeting' in the top right to choose a recording mode",
     "delete_meeting": "Delete Meeting",
     "save_recording": "Save Recording File",
     "status_recording": "Recording",
@@ -437,6 +485,10 @@ let enLocale: [String: String] = [
     "selected_count_fmt": "%d selected",
     "batch_delete_count": "Delete(%d)",
     "batch_manage": "Batch Manage",
+    "wizard_hotwords_title": "Hotwords Management",
+    "wizard_hotwords_desc": "Configure global custom hotwords and their weights to improve recognition accuracy for specific domain terminology.",
+    "wizard_batch_title": "Meeting Management",
+    "wizard_batch_desc": "Batch manage all meeting records, allowing multi-selection for deletion or export operations.",
     "batch_delete_meetings": "Delete Meetings",
     "batch_delete_meetings_msg": "Delete %d selected meetings? This cannot be undone.",
     "batch_delete_clips": "Batch Delete",
@@ -562,10 +614,20 @@ let enLocale: [String: String] = [
     "target_peak": "Target Peak",
     "target_peak_desc": "Target level for speech (-3dBFS)",
     "max_gain": "Max Gain",
-    "max_gain_desc": "Maximum amplification for speech enhancement",
+    "max_gain_desc": "Maximum amplification factor for voice enhancement",
+    
+    // Model status
+    "model_online_label": "Streaming: ",
+    "model_offline_label": "Offline High-Accuracy: ",
+    "model_punct_label": "Punctuation: ",
+    "model_ready": "Ready",
+    "model_not_found": "Not Found",
+    "model_built_in_hint": "Core speech models are built into the app. No extra download needed.",
     "base_gain": "Base Gain",
     "base_gain_desc": "Base gain for mid-high level speech",
     "vad_params": "Voice Activity Detection",
+    "vad_threshold": "VAD Threshold",
+    "vad_threshold_desc": "Silero VAD threshold (0.05~0.5): lower is more sensitive",
     "voice_segmentation": "Voice Segmentation & Transcription",
     "speaker_recognition": "Speaker Recognition",
     "speaker_diarization": "Speaker Diarization",
@@ -586,6 +648,8 @@ let enLocale: [String: String] = [
     "min_duration_on_desc": "Minimum speech segment duration (s) for sherpa-onnx diarization",
     "min_duration_off": "Min Silence Gap",
     "min_duration_off_desc": "Minimum silence gap (s) for sherpa-onnx diarization, smaller = finer split",
+    "embedding_split_threshold": "Intra-Sentence Split",
+    "embedding_split_threshold_desc": "Cosine distance threshold (0~2) for splitting sentences at speaker change points",
     "consumer_poll_interval": "Consumer Poll Interval",
     "consumer_poll_interval_desc": "Interval for offline transcription consumer to fetch data",
     "max_chunk_duration": "Max Chunk Duration",
@@ -632,281 +696,299 @@ let enLocale: [String: String] = [
     "wizard_help": "Help",
     "skip": "Skip",
     "start_using": "Start Using",
+    "industry_hotwords_management": "Hotword Group Management",
+    "add_industry": "Add Group",
+    "industry_name": "Group Name",
+    "industry_words": "Hotwords (space separated)",
+    "add": "Add",
+    "funasr_engine_title": "FunASR Speech Engine",
+    "diarization_strategy_title": "Speaker Diarization",
+    "diarization_strategy_hint": "Select the speaker recognition mode for this meeting:",
+    "preset_strict": "More Speakers (Strict)",
+    "preset_balanced": "Balanced (Recommended)",
+    "preset_aggressive": "Fewer Speakers (Aggressive)",
+    "advanced_settings": "Advanced Settings",
 ]
 
 struct SettingsView: View {
     @State private var settings = SettingsManager.shared
     @State private var showLangPicker = false
-    @State private var downloadTask: Task<Void, Never>? = nil
-    @State private var downloadStateVersion = 0
-    @State private var showRedownloadAlert = false
+    @State private var showAdvancedAlgorithms = false
 
     private let labelWidth: CGFloat = 85
 
     var body: some View {
         @Bindable var settings = settings
-        ZStack {
-            VStack(spacing: 0) {
-                ScrollView {
-                    VStack(spacing: 20) {
-                        // Header
-                        HStack(spacing: 12) {
-                            Text(loc("settings"))
-                                .font(.title2)
-                                .fontWeight(.bold)
-                            Spacer()
-                            Button { showLangPicker = true } label: {
-                                HStack(spacing: 4) {
-                                    Image(systemName: "globe")
-                                    Text(settings.langSetting == "en" ? "EN" : "中")
-                                }
-                                .font(.caption)
-                                .fontWeight(.medium)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 5)
-                                .background(Color.primary.opacity(0.08))
-                                .clipShape(Capsule())
-                            }
-                            .buttonStyle(.plain)
-                            .popover(isPresented: $showLangPicker, arrowEdge: .bottom) {
-                                VStack(spacing: 2) {
-                                    Button(loc("follow_system")) { settings.langSetting = ""; showLangPicker = false }.padding(6).contentShape(Rectangle())
-                                    Button(loc("simplified_chinese")) { settings.langSetting = "zh-Hans"; showLangPicker = false }.padding(6).contentShape(Rectangle())
-                                    Button("English") { settings.langSetting = "en"; showLangPicker = false }.padding(6).contentShape(Rectangle())
-                                }
-                                .padding(6)
-                                .frame(width: 110)
-                            }
-                            
-                        }
-                        .padding(.top, 16)
-                        
-                        // Card 1: 语音识别模型
-                        VStack(alignment: .leading, spacing: 16) {
-                            Label(loc("speech_model"), systemImage: "waveform.circle.fill")
-                                .font(.headline)
-                                .foregroundStyle(.purple)
-                            
-                            VStack(spacing: 12) {
-                                // Row 1: 模型名称 + 状态操作
-                                HStack(spacing: 12) {
-                                    Text(loc("model_label"))
-                                        .font(.callout)
-                                        .foregroundStyle(.secondary)
-                                        .frame(width: labelWidth, alignment: .leading)
-                                    
-                                    Text("openai/whisper-large-v3 (1.6 GB)")
-                                        .font(.callout)
-                                        .foregroundStyle(.primary)
-                                    
-                                    Spacer()
-                                    
-                                    PressableButton(
-                                        disabled: false,
-                                        action: {
-                                            if !settings.currentModelDownloading {
-                                                if isModelDownloaded {
-                                                    showRedownloadAlert = true
-                                                } else {
-                                                    downloadModel()
-                                                }
-                                            }
-                                        }
-                                    ) {
-                                        HStack(spacing: 4) {
-                                            if settings.currentModelDownloading {
-                                                ProgressView().controlSize(.small).frame(width: 12, height: 12)
-                                                Text(String(format: "%.0f%%", settings.currentModelProgress * 100))
-                                                    .font(.caption)
-                                                    .fontWeight(.medium)
-                                                Button {
-                                                    downloadTask?.cancel()
-                                                } label: {
-                                                    Image(systemName: "xmark.circle.fill")
-                                                        .foregroundStyle(.red)
-                                                        .font(.caption)
-                                                }
-                                                .buttonStyle(.plain)
-                                            } else if isModelDownloaded {
-                                                Circle().fill(Color.green).frame(width: 6, height: 6)
-                                                Text(loc("downloaded"))
-                                                    .font(.caption)
-                                                    .fontWeight(.medium)
-                                                Image(systemName: "arrow.clockwise")
-                                                    .font(.caption)
-                                            } else {
-                                                Circle().fill(Color.red).frame(width: 6, height: 6)
-                                                Text(loc("click_to_download"))
-                                                    .font(.caption)
-                                                    .fontWeight(.medium)
-                                                Image(systemName: "arrow.down.to.line")
-                                                    .font(.caption)
-                                            }
-                                        }
-                                        .padding(.horizontal, 10)
-                                        .padding(.vertical, 4)
-                                        .frame(minWidth: 120, maxWidth: 120)
-                                        .background(settings.currentModelDownloading ? Color.blue.opacity(0.12) : (isModelDownloaded ? Color.green.opacity(0.12) : Color.blue.opacity(0.12)))
-                                        .foregroundStyle(settings.currentModelDownloading ? .blue : (isModelDownloaded ? .green : .blue))
-                                        .cornerRadius(6)
-                                    }
-                                    .help(isModelDownloaded ? loc("redownload_hint") : "")
-                                }
-                                
-                                if let err = settings.currentModelError {
-                                    HStack {
-                                        Spacer().frame(width: labelWidth + 12)
-                                        Text("\(loc("download_error_label")): \(err)")
-                                            .font(.caption)
-                                            .foregroundStyle(.red)
-                                        Spacer()
-                                    }
-                                }
-                            }
-                        }
-                        .padding(20)
-                        .background(RoundedRectangle(cornerRadius: 12).fill(.background.opacity(0.4)))
-                        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.primary.opacity(0.08), lineWidth: 1))
+        VStack(alignment: .leading, spacing: 0) {
+            // 头部
+            HStack {
+                Text(loc("settings"))
+                    .font(.title2)
+                    .fontWeight(.semibold)
+                Spacer()
+            }
+            .padding()
+            .background(.regularMaterial)
+            
+            Divider()
 
-                        // Card 2: 算法参数配置
-                        algoParamsCard
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+                    // 模块一：引擎状态
+                    modelsSection
+                    
+                    // 模块二：算法策略与进阶调试
+                    algorithmSection
+                    
+                    Spacer(minLength: 32)
+                    
+                    // 底部关于与授权说明
+                    VStack(spacing: 6) {
+                        Text("v\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0")")
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                        Text(loc("about_desc"))
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        Text(loc("copyright"))
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
                     }
-                    .padding(.horizontal, 24)
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 16)
                 }
-                
-                Divider()
-                
-                // About Footer
-                VStack(spacing: 4) {
-                    Text("v\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0")")
-                        .font(.caption)
-                        .fontWeight(.semibold)
-                    Text(loc("about_desc"))
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                    Text(loc("copyright"))
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                }
-                .padding(.vertical, 12)
-                .frame(maxWidth: .infinity)
-                .background(.regularMaterial)
+                .padding(24)
             }
         }
         .frame(minWidth: 960, minHeight: 760)
         .background(.regularMaterial)
-        .onAppear { load() }
-        .onReceive(NotificationCenter.default.publisher(for: SettingsManager.downloadStateDidChangeNotification)) { _ in
-            downloadStateVersion += 1
-        }
-        .alert(loc("redownload_confirm_title"), isPresented: $showRedownloadAlert) {
-            Button(loc("cancel"), role: .cancel) { }
-            Button(loc("redownload_confirm_ok"), role: .destructive) { downloadModel() }
-        } message: {
-            Text(loc("redownload_confirm_msg"))
-        }
+        .onAppear { settings.load() }
+        .navigationTitle(loc("settings"))
     }
 
-    // MARK: - Helpers
+    // MARK: - Subsections
+    
+    private var modelsSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Label(loc("funasr_engine_title"), systemImage: "waveform.circle.fill")
+                .font(.headline)
+                .foregroundStyle(.teal)
 
-    private var algoParamsCard: some View {
-        @Bindable var settings = settings
-        
-        return VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                Label(loc("algo_params"), systemImage: "slider.horizontal.3")
-                    .font(.headline)
-                    .foregroundStyle(.orange)
-                Spacer()
-                PressableButton(disabled: false, action: resetAlgoDefaults) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "arrow.counterclockwise")
-                        Text(loc("reset_defaults"))
+            // 模型状态汇总 (一行显示)
+            HStack(spacing: 0) {
+                // 流式转写
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(settings.isFunASROnlineAvailable ? Color.green : Color.orange)
+                        .frame(width: 6, height: 6)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(loc("model_online_label") + (settings.isFunASROnlineAvailable ? loc("model_ready") : loc("model_not_found")))
+                            .font(.caption)
+                            .foregroundStyle(settings.isFunASROnlineAvailable ? Color.secondary : Color.orange)
+                        Text("streaming-paraformer-bilingual-zh-en")
+                            .font(.system(size: 10, weight: .regular, design: .monospaced))
+                            .foregroundStyle(Color.secondary.opacity(0.65))
                     }
-                    .font(.caption)
-                    .fontWeight(.medium)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 4)
-                    .frame(minWidth: 120, maxWidth: 120)
-                    .background(Color.orange.opacity(0.12))
-                    .foregroundStyle(.orange)
-                    .cornerRadius(6)
                 }
-            }
-            
-            Text(loc("algo_params_desc"))
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            
-            // ---- 音频处理 ----
-            algoSectionHeader(loc("audio_processing"), "waveform")
-            
-            LazyVGrid(columns: algoColumns, spacing: 10) {
-                algoCell(loc("silence_threshold"), value: $settings.silenceThreshold,
-                         range: 0.0...0.1, fmt: "%.4f",
-                         hintLow: loc("hint_more_precise"), hintHigh: loc("hint_more_lenient"))
-                algoCell(loc("noise_gate"), value: $settings.noiseGate,
-                         range: 0.0...0.01, fmt: "%.4f",
-                         hintLow: loc("hint_more_precise"), hintHigh: loc("hint_more_lenient"))
-                algoCell(loc("target_peak"), value: $settings.targetPeak,
-                         range: 0.3...0.95, fmt: "%.2f",
-                         hintLow: loc("hint_quieter"), hintHigh: loc("hint_louder"))
-                algoCell(loc("base_gain"), value: $settings.baseGain,
-                         range: 1.0...5.0, fmt: "%.1f", unit: loc("unit_times"),
-                         hintLow: loc("hint_lower"), hintHigh: loc("hint_higher"))
-            }
-            
-            // ---- 语音分段与转写 ----
-            algoSectionHeader(loc("voice_segmentation"), "text.bubble")
-            
-            LazyVGrid(columns: algoColumns, spacing: 10) {
-                algoCell(loc("pause_window"), value: $settings.pauseWindow,
-                         range: 0.5...5.0, fmt: "%.1f", unit: loc("unit_seconds"),
-                         hintLow: loc("hint_shorter"), hintHigh: loc("hint_longer"))
-                algoCell(loc("max_chunk_duration"), value: $settings.maxChunkDuration,
-                         range: 3.0...20.0, fmt: "%.0f", unit: loc("unit_seconds"),
-                         hintLow: loc("hint_shorter"), hintHigh: loc("hint_longer"))
-                algoCell(loc("min_duration_on"), value: $settings.minDurationOn,
-                         range: 0.1...2.0, fmt: "%.1f",
-                         hintLow: loc("hint_more_sensitive"), hintHigh: loc("hint_more_stable"))
-                algoCell(loc("min_duration_off"), value: $settings.minDurationOff,
-                         range: 0.1...2.0, fmt: "%.1f",
-                         hintLow: loc("hint_finer_grained"), hintHigh: loc("hint_more_relaxed"))
-                algoCell(loc("live_transcribe_interval"), value: $settings.liveTranscribeInterval,
-                         range: 0.5...5.0, fmt: "%.1f", unit: loc("unit_seconds"),
-                         hintLow: loc("hint_shorter"), hintHigh: loc("hint_longer"))
-                algoCell(loc("consumer_poll_interval"), value: $settings.consumerPollInterval,
-                         range: 0.1...1.0, fmt: "%.2f", unit: loc("unit_seconds"),
-                         hintLow: loc("hint_shorter"), hintHigh: loc("hint_longer"))
-            }
-            
-            // ---- 声纹处理 ----
-            algoSectionHeader(loc("speaker_recognition"), "person.2.wave.2")
-            
-            LazyVGrid(columns: algoColumns, spacing: 10) {
-                algoCell(loc("clustering_threshold"), value: $settings.clusteringThreshold,
-                         range: 0.5...1.5, fmt: "%.2f",
-                         hintLow: loc("hint_more_speakers"), hintHigh: loc("hint_fewer_speakers"))
-                algoCell(loc("incremental_clustering_distance"), value: $settings.incrementalClusteringDistance,
-                         range: 0.1...0.5, fmt: "%.2f",
-                         hintLow: loc("hint_more_speakers"), hintHigh: loc("hint_fewer_speakers"))
-                algoCell(loc("cluster_merge_distance"), value: $settings.clusterMergeDistance,
-                         range: 0.3...0.7, fmt: "%.2f",
-                         hintLow: loc("hint_more_speakers"), hintHigh: loc("hint_fewer_speakers"))
-                algoCell(loc("matching_threshold"), value: $settings.matchingThreshold,
-                         range: 0.3...0.9, fmt: "%.3f",
-                         hintLow: loc("hint_more_tolerant"), hintHigh: loc("hint_more_strict"))
-                algoCell(loc("high_confidence_threshold"), value: $settings.highConfidenceThreshold,
-                         range: 0.5...0.95, fmt: "%.3f",
-                         hintLow: loc("hint_more_lenient"), hintHigh: loc("hint_more_precise"))
-                algoCell(loc("live_matching_threshold"), value: $settings.liveMatchingThreshold,
-                         range: 0.3...0.8, fmt: "%.3f",
-                         hintLow: loc("hint_more_tolerant"), hintHigh: loc("hint_more_strict"))
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                // 离线高精度
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(settings.isFunASROfflineAvailable ? Color.green : Color.orange)
+                        .frame(width: 6, height: 6)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(loc("model_offline_label") + (settings.isFunASROfflineAvailable ? loc("model_ready") : loc("model_not_found")))
+                            .font(.caption)
+                            .foregroundStyle(settings.isFunASROfflineAvailable ? Color.secondary : Color.orange)
+                        Text("paraformer-zh-2024-03-09")
+                            .font(.system(size: 10, weight: .regular, design: .monospaced))
+                            .foregroundStyle(Color.secondary.opacity(0.65))
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                // 标点恢复
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(settings.isFunASRPunctAvailable ? Color.green : Color.secondary)
+                        .frame(width: 6, height: 6)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(loc("model_punct_label") + (settings.isFunASRPunctAvailable ? loc("model_ready") : loc("model_not_found")))
+                            .font(.caption)
+                            .foregroundStyle(settings.isFunASRPunctAvailable ? Color.secondary : Color.orange)
+                        Text("ct-transformer-zh-en-272727-int8")
+                            .font(.system(size: 10, weight: .regular, design: .monospaced))
+                            .foregroundStyle(Color.secondary.opacity(0.65))
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .padding(20)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: 12).fill(.background.opacity(0.4)))
         .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.primary.opacity(0.08), lineWidth: 1))
+    }
+
+    private var algorithmSection: some View {
+        @Bindable var settings = settings
+        
+        return VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 14) {
+                Label(loc("diarization_strategy_title"), systemImage: "person.2.wave.2")
+                    .font(.headline)
+                    .foregroundStyle(.orange)
+                
+                Text(loc("diarization_strategy_hint"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                
+                HStack(spacing: 12) {
+                    // 预置参数：更多人（严格分离）
+                    PressableButton(disabled: false, action: applyStrictPreset) {
+                        Text(loc("preset_strict"))
+                            .font(.body)
+                            .fontWeight(.medium)
+                            .padding(.horizontal, 20)
+                            .padding(.vertical, 10)
+                            .frame(maxWidth: .infinity)
+                            .background(Color.blue.opacity(0.12))
+                            .foregroundStyle(.blue)
+                            .cornerRadius(8)
+                    }
+                    
+                    // 预置参数：适中（恢复默认）
+                    PressableButton(disabled: false, action: resetAlgoDefaults) {
+                        Text(loc("preset_balanced"))
+                            .font(.body)
+                            .fontWeight(.medium)
+                            .padding(.horizontal, 20)
+                            .padding(.vertical, 10)
+                            .frame(maxWidth: .infinity)
+                            .background(Color.orange.opacity(0.12))
+                            .foregroundStyle(.orange)
+                            .cornerRadius(8)
+                    }
+                    
+                    // 预置参数：更少人（激进合并）
+                    PressableButton(disabled: false, action: applyAggressivePreset) {
+                        Text(loc("preset_aggressive"))
+                            .font(.body)
+                            .fontWeight(.medium)
+                            .padding(.horizontal, 20)
+                            .padding(.vertical, 10)
+                            .frame(maxWidth: .infinity)
+                            .background(Color.green.opacity(0.12))
+                            .foregroundStyle(.green)
+                            .cornerRadius(8)
+                    }
+                }
+
+                Divider()
+                    .padding(.vertical, 4)
+
+                // 全行响应的自定义展开按钮
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        showAdvancedAlgorithms.toggle()
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: showAdvancedAlgorithms ? "chevron.down" : "chevron.right")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text(loc("advanced_settings"))
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .foregroundStyle(.primary)
+                        Spacer()
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+
+                if showAdvancedAlgorithms {
+                    VStack(alignment: .leading, spacing: 14) {
+                        Text(loc("algo_params_desc"))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .padding(.top, 8)
+                            
+                        // ---- 音频处理 ----
+                        algoSectionHeader(loc("audio_processing"), "waveform")
+                        
+                        LazyVGrid(columns: algoColumns, spacing: 10) {
+                            algoCell(loc("silence_threshold"), value: $settings.silenceThreshold,
+                                     range: 0.0...0.1, fmt: "%.4f",
+                                     hintLow: loc("hint_more_precise"), hintHigh: loc("hint_more_lenient"))
+                            algoCell(loc("noise_gate"), value: $settings.noiseGate,
+                                     range: 0.0...0.01, fmt: "%.4f",
+                                     hintLow: loc("hint_more_precise"), hintHigh: loc("hint_more_lenient"))
+                            algoCell(loc("target_peak"), value: $settings.targetPeak,
+                                     range: 0.3...0.95, fmt: "%.2f",
+                                     hintLow: loc("hint_quieter"), hintHigh: loc("hint_louder"))
+                            algoCell(loc("base_gain"), value: $settings.baseGain,
+                                     range: 1.0...5.0, fmt: "%.1f", unit: loc("unit_times"),
+                                     hintLow: loc("hint_lower"), hintHigh: loc("hint_higher"))
+                        }
+                        
+                        // ---- 语音分段与转写 ----
+                        algoSectionHeader(loc("voice_segmentation"), "text.bubble")
+                        
+                        LazyVGrid(columns: algoColumns, spacing: 10) {
+                            algoCell(loc("pause_window"), value: $settings.pauseWindow,
+                                     range: 0.5...5.0, fmt: "%.1f", unit: loc("unit_seconds"),
+                                     hintLow: loc("hint_shorter"), hintHigh: loc("hint_longer"))
+                            algoCell(loc("max_chunk_duration"), value: $settings.maxChunkDuration,
+                                     range: 3.0...20.0, fmt: "%.0f", unit: loc("unit_seconds"),
+                                     hintLow: loc("hint_shorter"), hintHigh: loc("hint_longer"))
+                            algoCell(loc("min_duration_on"), value: $settings.minDurationOn,
+                                     range: 0.1...2.0, fmt: "%.1f",
+                                     hintLow: loc("hint_more_sensitive"), hintHigh: loc("hint_more_stable"))
+                            algoCell(loc("min_duration_off"), value: $settings.minDurationOff,
+                                     range: 0.1...2.0, fmt: "%.1f",
+                                     hintLow: loc("hint_finer_grained"), hintHigh: loc("hint_more_relaxed"))
+                            algoCell(loc("embedding_split_threshold"), value: $settings.embeddingSplitThreshold,
+                                     range: 0.2...0.7, fmt: "%.2f",
+                                     hintLow: loc("hint_more_sensitive"), hintHigh: loc("hint_more_stable"))
+                            algoCell(loc("live_transcribe_interval"), value: $settings.liveTranscribeInterval,
+                                     range: 0.5...5.0, fmt: "%.1f", unit: loc("unit_seconds"),
+                                     hintLow: loc("hint_shorter"), hintHigh: loc("hint_longer"))
+                        }
+                        
+                        // ---- 声纹处理 ----
+                        algoSectionHeader(loc("speaker_recognition"), "person.2.wave.2")
+                        
+                        LazyVGrid(columns: algoColumns, spacing: 10) {
+                            algoCell(loc("clustering_threshold"), value: $settings.clusteringThreshold,
+                                     range: 0.5...1.5, fmt: "%.2f",
+                                     hintLow: loc("hint_more_speakers"), hintHigh: loc("hint_fewer_speakers"))
+                            algoCell(loc("incremental_clustering_distance"), value: $settings.incrementalClusteringDistance,
+                                     range: 0.1...0.5, fmt: "%.2f",
+                                     hintLow: loc("hint_more_speakers"), hintHigh: loc("hint_fewer_speakers"))
+                            algoCell(loc("cluster_merge_distance"), value: $settings.clusterMergeDistance,
+                                     range: 0.3...0.7, fmt: "%.2f",
+                                     hintLow: loc("hint_more_speakers"), hintHigh: loc("hint_fewer_speakers"))
+                            algoCell(loc("matching_threshold"), value: $settings.matchingThreshold,
+                                     range: 0.3...0.9, fmt: "%.3f",
+                                     hintLow: loc("hint_more_tolerant"), hintHigh: loc("hint_more_strict"))
+                            algoCell(loc("high_confidence_threshold"), value: $settings.highConfidenceThreshold,
+                                     range: 0.5...0.95, fmt: "%.3f",
+                                     hintLow: loc("hint_more_lenient"), hintHigh: loc("hint_more_precise"))
+                            algoCell(loc("live_matching_threshold"), value: $settings.liveMatchingThreshold,
+                                     range: 0.3...0.8, fmt: "%.3f",
+                                     hintLow: loc("hint_more_tolerant"), hintHigh: loc("hint_more_strict"))
+                        }
+                    }
+                    .padding(.top, 10)
+                }
+            } // end if showAdvancedAlgorithms
+            .padding(20)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 12).fill(.background.opacity(0.4)))
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.primary.opacity(0.08), lineWidth: 1))
+        }
     }
     
     private let algoColumns = [
@@ -967,117 +1049,51 @@ struct SettingsView: View {
         settings.liveTranscribeInterval = 1.5
         settings.noiseGate = 0.002
         settings.targetPeak = 0.7
+        settings.maxGain = 30.0
         settings.baseGain = 1.5
         settings.clusteringThreshold = 0.71
         settings.incrementalClusteringDistance = 0.45
         settings.clusterMergeDistance = 0.45
-        settings.minDurationOn = 0.5
-        settings.minDurationOff = 0.5
+        settings.minDurationOn = 0.3
+        settings.minDurationOff = 0.2
+        settings.embeddingSplitThreshold = 0.40
         settings.matchingThreshold = 0.63
         settings.highConfidenceThreshold = 0.655
         settings.liveMatchingThreshold = 0.58
         settings.consumerPollInterval = 0.3
         settings.maxChunkDuration = 20.0
     }
-
-    // MARK: - Helpers (Model)
-
-    /// 模型实际存储目录
-    private var modelRepoPath: String {
-        URL(fileURLWithPath: settings.modelPath)
-            .appendingPathComponent("models/argmaxinc/whisperkit-coreml").path
-    }
     
-    private var isModelDownloaded: Bool {
-        let voice = settings.selectedVoice
-        // 正在下载的模型不算已下载，避免下载中误判为已完成
-        let state = settings.downloadState(for: voice)
-        if state.isDownloading { return false }
-        let id = SettingsManager.supportedModelID
-        let repoPath = modelRepoPath
-        let modelURL = URL(fileURLWithPath: repoPath).appendingPathComponent(id)
-        
-        var isDir: ObjCBool = false
-        let exists = FileManager.default.fileExists(atPath: modelURL.path, isDirectory: &isDir)
-        if exists && isDir.boolValue {
-            let markerURL = modelURL.appendingPathComponent(".download_complete")
-            return FileManager.default.fileExists(atPath: markerURL.path)
-        }
-        return false
+    private func applyStrictPreset() {
+        resetAlgoDefaults()
+        // 声纹聚类：更紧，识别更多说话人
+        settings.clusteringThreshold = 0.55
+        settings.incrementalClusteringDistance = 0.35
+        settings.clusterMergeDistance = 0.35
+        settings.matchingThreshold = 0.68
+        settings.highConfidenceThreshold = 0.72
+        settings.liveMatchingThreshold = 0.65
+        // 语音分段：更敏感，捕捉短语句
+        settings.minDurationOn = 0.2
+        settings.minDurationOff = 0.15
+        settings.embeddingSplitThreshold = 0.35
     }
-    
-    private func downloadModel() {
-        let downloadingVoice = settings.selectedVoice
-        let variant = SettingsManager.supportedModelID
-        
-        settings.setDownloadState(SettingsManager.ModelDownloadState(isDownloading: true, progress: 0.0, error: nil), for: downloadingVoice)
 
-        downloadTask = Task {
-            let downloadURL = URL(fileURLWithPath: settings.modelPath)
-            
-            do {
-                let modelDir = try await ModelDownloadService.download(
-                    variant: variant,
-                    downloadBase: downloadURL
-                ) { progress in
-                    DispatchQueue.main.async {
-                        var state = settings.downloadState(for: downloadingVoice)
-                        state.progress = progress
-                        settings.setDownloadState(state, for: downloadingVoice)
-                    }
-                }
-                guard !Task.isCancelled else {
-                    // 下载中途被取消：重置状态，清理标记文件
-                    DispatchQueue.main.async {
-                        var resetState = SettingsManager.ModelDownloadState()
-                        settings.setDownloadState(resetState, for: downloadingVoice)
-                        self.downloadTask = nil
-                    }
-                    // 清理可能存在的下载完成标记
-                    let markerURL = modelDir.appendingPathComponent(".download_complete")
-                    try? FileManager.default.removeItem(at: markerURL)
-                    return
-                }
-                await WhisperService.shared.reset()
-                try? Data().write(to: modelDir.appendingPathComponent(".download_complete"))
-                DispatchQueue.main.async {
-                    self.downloadTask = nil
-                    var finalState = SettingsManager.ModelDownloadState()
-                    finalState.isDownloaded = true
-                    settings.setDownloadState(finalState, for: downloadingVoice)
-                    settings.modelVersion = SettingsManager.supportedModelID
-                    settings.save()
-                }
-            } catch {
-                DispatchQueue.main.async {
-                    if Task.isCancelled {
-                        // 用户取消：重置为干净状态
-                        var resetState = SettingsManager.ModelDownloadState()
-                        settings.setDownloadState(resetState, for: downloadingVoice)
-                    } else {
-                        AppLog.error("hf-mirror download failed: \(error.localizedDescription)")
-                        settings.setDownloadState(SettingsManager.ModelDownloadState(isDownloading: false, progress: 0.0, error: "\(loc("err_download_failed"))\n\(error.localizedDescription)"), for: downloadingVoice)
-                    }
-                    self.downloadTask = nil
-                }
-            }
-        }
+    private func applyAggressivePreset() {
+        resetAlgoDefaults()
+        // 声纹聚类：更宽松，合并相似说话人
+        settings.clusteringThreshold = 0.85
+        settings.incrementalClusteringDistance = 0.55
+        settings.clusterMergeDistance = 0.55
+        settings.matchingThreshold = 0.45
+        settings.highConfidenceThreshold = 0.50
+        settings.liveMatchingThreshold = 0.48
+        // 语音分段：更宽松，呈现连续语句
+        settings.minDurationOn = 0.4
+        settings.minDurationOff = 0.3
+        settings.embeddingSplitThreshold = 0.50
     }
-    
-    // MARK: - Helpers (Path)
 
-    /// 加载设置并检测已下载模型版本
-    private func load() {
-        settings.load()
-        // 检测已下载的模型版本
-        let variant = SettingsManager.supportedModelID
-        let modelURL = URL(fileURLWithPath: modelRepoPath).appendingPathComponent(variant)
-        var isDir: ObjCBool = false
-        if FileManager.default.fileExists(atPath: modelURL.path, isDirectory: &isDir), isDir.boolValue {
-            settings.modelVersion = variant
-        }
-    }
-    
 }
 
 // MARK: - 可交互按钮（替代 macOS 上 Button 点击区域受限问题，同时保留视觉反馈）
