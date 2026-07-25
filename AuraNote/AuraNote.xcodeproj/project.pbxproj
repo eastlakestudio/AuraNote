@@ -66,7 +66,7 @@
 
 /* Begin PBXFileReference section */
 		0009072AA7425E32F36159A4 /* HotwordPresetPickerSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotwordPresetPickerSheet.swift; sourceTree = "<group>"; };
-		0E0D8630516D68651933DDEA /* AuraNote.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = AuraNote.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		0E0D8630516D68651933DDEA /* AuraNote.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = "声纪.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		1912C447DB23A63199863722 /* HotwordsManagementView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotwordsManagementView.swift; sourceTree = "<group>"; };
 		326F8E30BEF47522C8350E42 /* HotwordPresets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotwordPresets.swift; sourceTree = "<group>"; };
 		33412488D9DC14ABB7FFD6B6 /* HotwordPresetsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotwordPresetsTests.swift; sourceTree = "<group>"; };
@@ -460,7 +460,7 @@
 				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/Libraries/sherpa-onnx/lib";
 				OTHER_LDFLAGS = "$(inherited) -lsherpa-onnx-c-api";
 				PRODUCT_BUNDLE_IDENTIFIER = com.eastlakestudio.auranote;
-				PRODUCT_NAME = AuraNote;
+				PRODUCT_NAME = "声纪";
 				SDKROOT = auto;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
 				SUPPORTS_MACCATALYST = NO;
@@ -482,7 +482,7 @@
 				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/Libraries/sherpa-onnx/lib";
 				OTHER_LDFLAGS = "$(inherited) -lsherpa-onnx-c-api";
 				PRODUCT_BUNDLE_IDENTIFIER = com.eastlakestudio.auranote;
-				PRODUCT_NAME = AuraNote;
+				PRODUCT_NAME = "声纪";
 				SDKROOT = auto;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
 				SUPPORTS_MACCATALYST = NO;
@@ -513,7 +513,7 @@
 				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = YES;
 				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/Libraries/sherpa-onnx";
 				TARGETED_DEVICE_FAMILY = "1,2";
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/AuraNote.app/Contents/MacOS/AuraNote";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/声纪.app/Contents/MacOS/声纪";
 			};
 			name = Debug;
 		};
@@ -664,7 +664,7 @@
 				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = YES;
 				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/Libraries/sherpa-onnx";
 				TARGETED_DEVICE_FAMILY = "1,2";
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/AuraNote.app/Contents/MacOS/AuraNote";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/声纪.app/Contents/MacOS/声纪";
 			};
 			name = Release;
 		};

@@ -298,6 +298,9 @@ final class SherpaOnnxEmbeddingExtractor {
         }
 
         let rawPtr = SherpaOnnxSpeakerEmbeddingExtractorComputeEmbedding(ex, stream)
+        guard let rawPtr = rawPtr else {
+            throw SherpaError.embeddingFailed("声纹提取返回空指针")
+        }
         defer { SherpaOnnxSpeakerEmbeddingExtractorDestroyEmbedding(rawPtr) }
 
         let embedding = Array(UnsafeBufferPointer(start: rawPtr, count: Int(dim)))

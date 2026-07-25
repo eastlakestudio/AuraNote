@@ -1342,8 +1342,9 @@ actor FunASRService {
         try file.read(into: buffer)
 
         let samples: [Float]
-        if file.processingFormat.sampleRate == 16000 && file.processingFormat.channelCount == 1 {
-            let channelData = buffer.floatChannelData![0]
+        if file.processingFormat.sampleRate == 16000 && file.processingFormat.channelCount == 1,
+           file.processingFormat.commonFormat == .pcmFormatFloat32,
+           let channelData = buffer.floatChannelData?[0] {
             samples = Array(UnsafeBufferPointer(start: channelData, count: Int(buffer.frameLength)))
             return (samples, 16000)
         }
