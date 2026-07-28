@@ -53,6 +53,7 @@ targets:
         script: |
           set -e
           MODELS_DIR="${BUILT_PRODUCTS_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/sherpa-onnx-models"
+          rm -rf "$MODELS_DIR"
           mkdir -p "$MODELS_DIR"
           cp -R "${SRCROOT}/Libraries/sherpa-onnx/models/"* "$MODELS_DIR/"
         basedOnDependencyAnalysis: false

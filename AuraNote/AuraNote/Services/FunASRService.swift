@@ -14,9 +14,14 @@ actor FunASRService {
     // MARK: - 伪流式（Pseudo-Streaming，基于离线 Paraformer 模型）
 
     /// 实时录音期间累积的音频样本，每隔 liveTranscribeInterval 做一次离线推理
+    /// 窗口上限 30s（480K 采样@16kHz），保证 2hr+ 会议不退化
     private var pseudoStreamBuffer: [Float] = []
+    /// 窗口上限采样数：30 秒
+    private let maxPseudoBufferSamples = 480_000
     /// 上一次伪流式推理的完整文本，用于计算增量
     private var lastPseudoText: String = ""
+    /// 缓冲区代数：每次 reset 递增，丢弃过期推理结果
+    private var bufferGeneration: Int = 0
 
     // MARK: - Offline (Paraformer)
 
@@ -35,8 +40,6 @@ actor FunASRService {
 
     // MARK: - State
 
-    /// 在线就绪状态：与离线共用同一模型，直接映射 isOfflineReady
-    var isOnlineReady: Bool { isOfflineReady }
     private(set) var isOfflineReady = false
     private(set) var isPunctReady = false
     private(set) var isVadReady = false
@@ -55,8 +58,7 @@ actor FunASRService {
     /// VAD 模型文件路径（silero_vad.onnx）
     private(set) var configuredVadModelPath: String = ""
 
-    func updateModelPaths(online: String, offline: String, punct: String, vad: String) {
-        // online 参数保留以兼容调用侧，但实际不再使用独立在线模型
+    func updateModelPaths(offline: String, punct: String, vad: String) {
         self.configuredOfflineModelDir = offline
         self.configuredPunctModelPath = punct
         self.configuredVadModelPath = vad
@@ -81,22 +83,30 @@ actor FunASRService {
         }
         pseudoStreamBuffer = []
         lastPseudoText = ""
+        bufferGeneration += 1
         AppLog.info("[FunASR] Pseudo-stream buffer reset")
     }
 
     // MARK: - 伪流式方法
 
     /// 将音频样本追加到伪流式缓冲区（由 AudioRecorder 的 tap 回调驱动）
+    /// 缓冲区上限 30s，超出部分从头部截断，确保 2hr+ 会议性能不退化
     func acceptWaveform(samples: [Float], sampleRate: Int32 = 16000) {
         pseudoStreamBuffer.append(contentsOf: samples)
+        if pseudoStreamBuffer.count > maxPseudoBufferSamples {
+            let overflow = pseudoStreamBuffer.count - maxPseudoBufferSamples
+            pseudoStreamBuffer.removeFirst(overflow)
+            // 截断后清除 lastPseudoText，避免前缀匹配失败导致全文重复
+            lastPseudoText = ""
+        }
     }
 
-    /// 对伪流式缓冲区做一次完整的离线推理，返回增量文本
-    ///
-    /// 每隔 `liveTranscribeInterval`（默认 1.5s）由外部定时器轮询调用。
-    /// 返回自上次调用以来新增的文本（增量），若无变化则返回 nil。
+    /// 对伪流式缓冲区做一次完整离线推理，返回增量文本
     func decodeStreamIncremental() -> String? {
+        let gen = bufferGeneration
         guard let fullText = runPseudoStreamInference() else { return nil }
+        // 丢弃过期推理结果（缓冲区已被 reset 或截断）
+        guard bufferGeneration == gen else { return nil }
         let trimmed = fullText.trimmingCharacters(in: .whitespaces)
 
         if trimmed.hasPrefix(lastPseudoText) {
@@ -104,7 +114,6 @@ actor FunASRService {
             lastPseudoText = trimmed
             return incremental.isEmpty ? nil : incremental
         } else {
-            // 文本回退（罕见）：全量返回最新结果
             lastPseudoText = trimmed
             return trimmed.isEmpty ? nil : trimmed
         }
@@ -135,10 +144,11 @@ actor FunASRService {
         _ = decodeStreamIncremental()
     }
 
-    /// 重置伪流式状态（用于下一段录音）
+    /// 重置伪流式状态（用于 VAD 切段后重新开始累积）
     func resetOnlineStream() {
         pseudoStreamBuffer = []
         lastPseudoText = ""
+        bufferGeneration += 1
     }
 
     /// 仅兼容旧调用：伪流式模式下无需解码步骤，直接返回 nil

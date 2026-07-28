@@ -1,7 +1,7 @@
 import AVFoundation
 import CSherpaOnnx
 
-/// 音频录制 + 基于 sherpa-onnx FunASR（Paraformer 流式 + SenseVoice 离线）的本地实时转写服务
+/// 音频录制 + 基于 sherpa-onnx FunASR（伪流式 + 离线 Paraformer）的本地实时转写服务
 /// 流水线：始终录音 → FunASR 流式转写 + VAD 静默切割（声纹） → 声纹事后处理
 @Observable
 final class AudioRecorder {

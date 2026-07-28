@@ -382,7 +382,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "set -e\nMODELS_DIR=\"${BUILT_PRODUCTS_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/sherpa-onnx-models\"\nmkdir -p \"$MODELS_DIR\"\ncp -R \"${SRCROOT}/Libraries/sherpa-onnx/models/\"* \"$MODELS_DIR/\"\n";
+			shellScript = "set -e\nMODELS_DIR=\"${BUILT_PRODUCTS_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/sherpa-onnx-models\"\nrm -rf \"$MODELS_DIR\"\nmkdir -p \"$MODELS_DIR\"\ncp -R \"${SRCROOT}/Libraries/sherpa-onnx/models/\"* \"$MODELS_DIR/\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 

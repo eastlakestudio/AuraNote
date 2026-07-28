@@ -80,7 +80,6 @@ struct AuraNoteApp: App {
                     // 启动时预加载 FunASR 语音模型
                     let settings = SettingsManager.shared
                     await FunASRService.shared.updateModelPaths(
-                        online: settings.funasrOnlineModelDir,
                         offline: settings.funasrOfflineModelDir,
                         punct: settings.funasrPunctModelPath,
                         vad: settings.funasrVadModelPath

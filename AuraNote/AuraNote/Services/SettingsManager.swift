@@ -132,12 +132,7 @@ final class SettingsManager {
         return modelPath + "/models/funasr/" + subpath
     }
     
-    /// FunASR 在线（伪流式）模型目录 — 与离线共用同一模型
-    var funasrOnlineModelDir: String {
-        return funasrOfflineModelDir
-    }
-    
-    /// FunASR 离线 Paraformer 模型目录（高精度整文件转写，带词级时间戳）
+    /// FunASR Paraformer 模型目录（实时伪流式 + 离线高精度共用）
     var funasrOfflineModelDir: String {
         return funasrDir("sherpa-onnx-paraformer-zh-2024-03-09")
     }
@@ -162,12 +157,7 @@ final class SettingsManager {
         return modelPath + "/models/funasr/" + subpath
     }
     
-    /// FunASR 在线（伪流式）模型是否可用 — 与离线共用同一模型
-    var isFunASROnlineAvailable: Bool {
-        return isFunASROfflineAvailable
-    }
-    
-    /// FunASR 离线模型是否已下载
+    /// FunASR Paraformer 模型是否已下载
     var isFunASROfflineAvailable: Bool {
         let dir = funasrOfflineModelDir
         return FileManager.default.fileExists(atPath: dir + "/model.int8.onnx")
@@ -234,9 +224,9 @@ final class SettingsManager {
         modelDownloadStates.first { $0.value.isDownloading }?.key ?? ""
     }
     
-    /// 模型是否已下载可用（FunASR 任一引擎就绪即可）
+    /// 模型是否已下载可用
     var isModelAvailable: Bool {
-        return isFunASROfflineAvailable || isFunASROnlineAvailable
+        return isFunASROfflineAvailable
     }
     
     var modelVersion = "" {
