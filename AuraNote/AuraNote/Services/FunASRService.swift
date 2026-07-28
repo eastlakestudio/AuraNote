@@ -11,11 +11,12 @@ import CSherpaOnnx
 actor FunASRService {
     static let shared = FunASRService()
 
-    // MARK: - Online (Streaming Paraformer)
+    // MARK: - 伪流式（Pseudo-Streaming，基于离线 Paraformer 模型）
 
-    private var onlineRecognizer: OpaquePointer?
-    private var onlineStream: OpaquePointer?
-    private var onlineModelDir: String = ""
+    /// 实时录音期间累积的音频样本，每隔 liveTranscribeInterval 做一次离线推理
+    private var pseudoStreamBuffer: [Float] = []
+    /// 上一次伪流式推理的完整文本，用于计算增量
+    private var lastPseudoText: String = ""
 
     // MARK: - Offline (Paraformer)
 
@@ -34,7 +35,8 @@ actor FunASRService {
 
     // MARK: - State
 
-    private(set) var isOnlineReady = false
+    /// 在线就绪状态：与离线共用同一模型，直接映射 isOfflineReady
+    var isOnlineReady: Bool { isOfflineReady }
     private(set) var isOfflineReady = false
     private(set) var isPunctReady = false
     private(set) var isVadReady = false
@@ -42,12 +44,7 @@ actor FunASRService {
 
     // MARK: - Model Path Configuration
 
-    /// 在线 Paraformer 模型目录路径（可通过 SettingsManager 配置）
-    private(set) var configuredOnlineModelDir: String = ""
-    /// 在线识别器最近一次初始化时使用的热词（用于判断是否需要重建）
-    private var configuredOnlineHotwords: String = ""
-
-    /// 离线 Paraformer 模型目录路径
+    /// 离线 Paraformer 模型目录路径（同时用于伪流式实时转写）
     private(set) var configuredOfflineModelDir: String = ""
     /// 离线识别器最近一次初始化时使用的热词（用于判断是否需要重建）
     private var configuredOfflineHotwords: String = ""
@@ -59,167 +56,94 @@ actor FunASRService {
     private(set) var configuredVadModelPath: String = ""
 
     func updateModelPaths(online: String, offline: String, punct: String, vad: String) {
-        self.configuredOnlineModelDir = online
+        // online 参数保留以兼容调用侧，但实际不再使用独立在线模型
         self.configuredOfflineModelDir = offline
         self.configuredPunctModelPath = punct
         self.configuredVadModelPath = vad
     }
 
-    // MARK: - Initialize Online (Streaming Paraformer)
+    // MARK: - 伪流式接口（兼容原 Online API，内部使用离线 Paraformer 实现）
 
-    /// 初始化在线流式 Paraformer 模型
+    /// 初始化伪流式识别（转调离线模型初始化，保持调用侧接口兼容）
     /// - Parameters:
-    ///   - modelDir: 模型目录，包含 encoder.int8.onnx、decoder.int8.onnx、tokens.txt
-    ///   - hotwords: 热词文本，通过 config.hotwords_buf 注入（Paraformer 不支持 per-stream 热词）
+    ///   - modelDir: 已废弃，忽略（统一使用 configuredOfflineModelDir）
+    ///   - hotwords: 热词文本
     func initializeOnline(modelDir: String? = nil, hotwords: String = "") throws {
-        let dir = modelDir ?? configuredOnlineModelDir
-        guard !dir.isEmpty else {
-            throw FunASRError.modelNotFound("在线模型路径未配置")
-        }
-        if isOnlineReady && onlineRecognizer != nil && dir == configuredOnlineModelDir && hotwords == configuredOnlineHotwords { return }
-
-        isLoading = true
-        defer { isLoading = false }
-
-        destroyOnline()
-
-        let encoderPath = dir + "/encoder.int8.onnx"
-        let decoderPath = dir + "/decoder.int8.onnx"
-        let tokensPath = dir + "/tokens.txt"
-
-        guard FileManager.default.fileExists(atPath: encoderPath),
-              FileManager.default.fileExists(atPath: decoderPath),
-              FileManager.default.fileExists(atPath: tokensPath) else {
-            throw FunASRError.modelNotFound("在线模型文件不完整: \(dir)")
-        }
-
-        try encoderPath.withCString { encoderCStr in
-            try decoderPath.withCString { decoderCStr in
-                try tokensPath.withCString { tokensCStr in
-                    try "cpu".withCString { providerCStr in
-                        try "greedy_search".withCString { methodCStr in
-                            var config = SherpaOnnxOnlineRecognizerConfig()
-                            memset(&config, 0, MemoryLayout<SherpaOnnxOnlineRecognizerConfig>.size)
-
-                            config.feat_config.sample_rate = 16000
-                            config.feat_config.feature_dim = 80
-
-                            config.model_config.paraformer.encoder = encoderCStr
-                            config.model_config.paraformer.decoder = decoderCStr
-                            config.model_config.tokens = tokensCStr
-                            config.model_config.num_threads = 2
-                            config.model_config.provider = providerCStr
-                            config.model_config.debug = 0
-
-                            config.decoding_method = methodCStr
-                            config.enable_endpoint = 0
-                            config.hotwords_score = SettingsManager.shared.hotwordsScore
-
-                            // 通过 config 级 hotwords_buf 注入热词（Paraformer 支持此方式）
-                            let hw = hotwords.trimmingCharacters(in: .whitespaces)
-                            if !hw.isEmpty {
-                                hw.withCString { hwCStr in
-                                    config.hotwords_buf = hwCStr
-                                    config.hotwords_buf_size = Int32(strlen(hwCStr))
-                                }
-                            }
-
-                            guard let rec = SherpaOnnxCreateOnlineRecognizer(&config) else {
-                                throw FunASRError.initializationFailed("创建在线 Paraformer 识别器失败")
-                            }
-                            self.onlineRecognizer = rec
-                            self.configuredOnlineModelDir = dir
-                            self.configuredOnlineHotwords = hotwords
-                            self.isOnlineReady = true
-                            AppLog.info("[FunASR] Online Paraformer initialized: \(dir), hotwords=\(hw.isEmpty ? "(none)" : "\(hw.count) chars")")
-                        }
-                    }
-                }
-            }
-        }
+        // 伪流式复用离线模型，转调 initializeOffline
+        try initializeOffline(hotwords: hotwords)
+        AppLog.info("[FunASR] Pseudo-streaming initialized via offline model")
     }
 
-    /// 创建或重建在线流（每次新录音开始时调用）
-    /// 注意：Paraformer 不支持 SherpaOnnxCreateOnlineStreamWithHotwords（仅 Transducer 支持），
-    /// 热词通过 recognizer config 的 hotwords_score 参数控制，此处使用普通 stream。
+    /// 重置伪流式缓冲区，准备接受新一轮录音（每次新录音开始时调用）
     func createOnlineStream(hotwords: String = "") throws {
-        guard let rec = onlineRecognizer else {
-            throw FunASRError.notInitialized("在线识别器未初始化")
+        guard isOfflineReady else {
+            throw FunASRError.notInitialized("离线模型未就绪，无法启动伪流式")
         }
-        destroyOnlineStream()
-
-        let stream = SherpaOnnxCreateOnlineStream(rec)
-
-        guard let stream = stream else {
-            throw FunASRError.initializationFailed("创建在线 Paraformer stream 失败")
-        }
-        self.onlineStream = stream
+        pseudoStreamBuffer = []
+        lastPseudoText = ""
+        AppLog.info("[FunASR] Pseudo-stream buffer reset")
     }
 
-    // MARK: - Online Streaming Methods
+    // MARK: - 伪流式方法
 
-    /// 喂入音频样本到流式识别器
-    /// - Parameters:
-    ///   - samples: 单声道 float32 PCM，归一化到 [-1, 1]
-    ///   - sampleRate: 采样率（默认 16000，sherpa-onnx 内部会自动重采样）
+    /// 将音频样本追加到伪流式缓冲区（由 AudioRecorder 的 tap 回调驱动）
     func acceptWaveform(samples: [Float], sampleRate: Int32 = 16000) {
-        guard let stream = onlineStream else { return }
-        var mutableSamples = samples
-        SherpaOnnxOnlineStreamAcceptWaveform(stream, sampleRate, &mutableSamples, Int32(samples.count))
+        pseudoStreamBuffer.append(contentsOf: samples)
     }
 
-    /// 检查是否有足够的帧可以解码
-    func isStreamReady() -> Bool {
-        guard let rec = onlineRecognizer, let stream = onlineStream else { return false }
-        return SherpaOnnxIsOnlineStreamReady(rec, stream) == 1
-    }
-
-    /// 解码一步，返回当前累积的识别文本
-    /// - Returns: 累积的识别文本，若无结果则返回 nil
-    func decodeStream() -> String? {
-        guard let rec = onlineRecognizer, let stream = onlineStream else { return nil }
-
-        while SherpaOnnxIsOnlineStreamReady(rec, stream) != 0 {
-            SherpaOnnxDecodeOnlineStream(rec, stream)
-        }
-
-        guard let result = SherpaOnnxGetOnlineStreamResult(rec, stream) else { return nil }
-        defer { SherpaOnnxDestroyOnlineRecognizerResult(result) }
-
-        guard let text = result.pointee.text else { return nil }
-        return String(cString: text)
-    }
-
-    /// 解码并返回增量文本（相比上次结果新增的部分）
-    private var lastDecodedText: String = ""
-
+    /// 对伪流式缓冲区做一次完整的离线推理，返回增量文本
+    ///
+    /// 每隔 `liveTranscribeInterval`（默认 1.5s）由外部定时器轮询调用。
+    /// 返回自上次调用以来新增的文本（增量），若无变化则返回 nil。
     func decodeStreamIncremental() -> String? {
-        guard let fullText = decodeStream() else { return nil }
+        guard let fullText = runPseudoStreamInference() else { return nil }
         let trimmed = fullText.trimmingCharacters(in: .whitespaces)
 
-        // 计算增量
-        if trimmed.hasPrefix(lastDecodedText) {
-            let incremental = String(trimmed.dropFirst(lastDecodedText.count)).trimmingCharacters(in: .whitespaces)
-            lastDecodedText = trimmed
+        if trimmed.hasPrefix(lastPseudoText) {
+            let incremental = String(trimmed.dropFirst(lastPseudoText.count)).trimmingCharacters(in: .whitespaces)
+            lastPseudoText = trimmed
             return incremental.isEmpty ? nil : incremental
         } else {
-            // 文本回退或重置，全量返回
-            lastDecodedText = trimmed
+            // 文本回退（罕见）：全量返回最新结果
+            lastPseudoText = trimmed
             return trimmed.isEmpty ? nil : trimmed
         }
     }
 
-    /// 标记输入结束（录音停止时调用）
-    func inputFinished() {
-        guard let stream = onlineStream else { return }
-        SherpaOnnxOnlineStreamInputFinished(stream)
+    /// 对当前 pseudoStreamBuffer 做一次离线 Paraformer 推理，返回完整识别文本
+    private func runPseudoStreamInference() -> String? {
+        guard let rec = offlineRecognizer, !pseudoStreamBuffer.isEmpty else { return nil }
+
+        guard let stream = SherpaOnnxCreateOfflineStream(rec) else { return nil }
+        defer { SherpaOnnxDestroyOfflineStream(stream) }
+
+        var mutableSamples = pseudoStreamBuffer
+        SherpaOnnxAcceptWaveformOffline(stream, 16000, &mutableSamples, Int32(mutableSamples.count))
+        SherpaOnnxDecodeOfflineStream(rec, stream)
+
+        guard let result = SherpaOnnxGetOfflineStreamResult(stream) else { return nil }
+        defer { SherpaOnnxDestroyOfflineRecognizerResult(result) }
+
+        guard let textPtr = result.pointee.text else { return nil }
+        return String(cString: textPtr).toSimplifiedChinese()
     }
 
-    /// 重置在线流状态（用于下一段录音）
+    /// 标记输入结束（录音停止时调用）
+    /// 伪流式无需显式 flush，最后一次 decodeStreamIncremental 已涵盖剩余音频。
+    func inputFinished() {
+        // 伪流式：触发一次最终推理，确保尾帧不丢失
+        _ = decodeStreamIncremental()
+    }
+
+    /// 重置伪流式状态（用于下一段录音）
     func resetOnlineStream() {
-        lastDecodedText = ""
-        guard let rec = onlineRecognizer, let stream = onlineStream else { return }
-        SherpaOnnxOnlineStreamReset(rec, stream)
+        pseudoStreamBuffer = []
+        lastPseudoText = ""
+    }
+
+    /// 仅兼容旧调用：伪流式模式下无需解码步骤，直接返回 nil
+    func decodeStream() -> String? {
+        return runPseudoStreamInference()
     }
 
     // MARK: - Initialize Offline (Paraformer)
@@ -1376,21 +1300,10 @@ actor FunASRService {
 
     // MARK: - Cleanup
 
-    func destroyOnlineStream() {
-        if let stream = onlineStream {
-            SherpaOnnxDestroyOnlineStream(stream)
-            onlineStream = nil
-        }
-        lastDecodedText = ""
-    }
-
+    /// 重置伪流式缓冲区（destroyOnline 兼容接口）
     func destroyOnline() {
-        destroyOnlineStream()
-        if let rec = onlineRecognizer {
-            SherpaOnnxDestroyOnlineRecognizer(rec)
-            onlineRecognizer = nil
-        }
-        isOnlineReady = false
+        pseudoStreamBuffer = []
+        lastPseudoText = ""
     }
 
     func destroyOffline() {
@@ -1409,7 +1322,7 @@ actor FunASRService {
         isPunctReady = false
     }
 
-    /// 释放所有模型
+    /// 释放所有模型及伪流式缓冲区
     func reset() {
         destroyOnline()
         destroyOffline()

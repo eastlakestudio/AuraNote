@@ -1,0 +1,3 @@
+/* Chinese localization for Info.plist */
+CFBundleDisplayName = "声纪";
+CFBundleName = "声纪";

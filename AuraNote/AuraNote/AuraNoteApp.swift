@@ -104,7 +104,7 @@ struct AuraNoteApp: App {
         .windowResizability(.contentMinSize)
         .commands {
             CommandGroup(replacing: .appInfo) {
-                Button("关于声纪") {
+                Button(loc("about_menu")) {
                     showAboutWindow()
                 }
             }
@@ -122,7 +122,7 @@ struct AuraNoteApp: App {
         let aboutVC = NSHostingController(rootView: AboutView().background(.regularMaterial))
         let aboutWindow = NSWindow(contentViewController: aboutVC)
         aboutWindow.identifier = NSUserInterfaceItemIdentifier("about")
-        aboutWindow.title = "关于声纪"
+        aboutWindow.title = loc("about_window_title")
         aboutWindow.styleMask = [.titled, .closable]
         aboutWindow.setContentSize(NSSize(width: 460, height: 440))
         aboutWindow.center()

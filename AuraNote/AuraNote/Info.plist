@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>声纪</string>
+	<string>听纪</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -13,19 +13,19 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>声纪</string>
+	<string>AuraNote</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.1.3</string>
+	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
-	<string>2</string>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.productivity</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>声纪需要访问麦克风以录制会议音频</string>
+	<string>听纪需要访问麦克风以录制会议音频</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>声纪需要语音识别权限以进行实时语音转写</string>
+	<string>听纪需要语音识别权限以进行实时语音转写</string>
 	<key>UILaunchScreen</key>
 	<dict>
 		<key>UIColorName</key>

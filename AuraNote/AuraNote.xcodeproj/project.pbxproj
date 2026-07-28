@@ -27,6 +27,7 @@
 		3DFBD7585040BC9D7D8811D5 /* AudioRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD4CB2A5248F793C5417C495 /* AudioRecorder.swift */; };
 		466900115390B327450B9800 /* RecordingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 394E5061EAE6DBB0A06E9D26 /* RecordingView.swift */; };
 		48D30037CC1C21BF356EB725 /* Logger.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8832094277C1EB4D20ACE58 /* Logger.swift */; };
+		4E058590F23121ED076E53C6 /* InfoPlist.strings in Resources */ = {isa = PBXBuildFile; fileRef = 5B0EE340B2A4D7F49D5899EC /* InfoPlist.strings */; };
 		51730AE847AECCB61F19C328 /* SpeakerAlignmentService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 94C95296CE1BAB1E6C22F297 /* SpeakerAlignmentService.swift */; };
 		5A89CFA75D23226A19233B22 /* MeetingListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 952B04F23E5B9716D14D7DCB /* MeetingListView.swift */; };
 		5D41639D60B5E4C5E1172A62 /* IncrementalSpeakerClustering.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72D8E245A507FD55C69C590E /* IncrementalSpeakerClustering.swift */; };
@@ -66,7 +67,7 @@
 
 /* Begin PBXFileReference section */
 		0009072AA7425E32F36159A4 /* HotwordPresetPickerSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotwordPresetPickerSheet.swift; sourceTree = "<group>"; };
-		0E0D8630516D68651933DDEA /* AuraNote.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = "声纪.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		0E0D8630516D68651933DDEA /* AuraNote.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = AuraNote.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		1912C447DB23A63199863722 /* HotwordsManagementView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotwordsManagementView.swift; sourceTree = "<group>"; };
 		326F8E30BEF47522C8350E42 /* HotwordPresets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotwordPresets.swift; sourceTree = "<group>"; };
 		33412488D9DC14ABB7FFD6B6 /* HotwordPresetsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotwordPresetsTests.swift; sourceTree = "<group>"; };
@@ -84,6 +85,7 @@
 		513A7CD37B3AFB757108CA04 /* UnifiedTranscriptEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UnifiedTranscriptEditor.swift; sourceTree = "<group>"; };
 		5407127495AA20185E7E659F /* ReviewingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewingView.swift; sourceTree = "<group>"; };
 		592767D6E5D92645EC5751D4 /* DynamicHeightTextField.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DynamicHeightTextField.swift; sourceTree = "<group>"; };
+		5B0EE340B2A4D7F49D5899EC /* InfoPlist.strings */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = InfoPlist.strings; path = "zh-Hans.lproj/InfoPlist.strings"; sourceTree = "<group>"; };
 		5B5BCF96CE20B1279DF702CC /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		602C3EC3B0DD96529085E433 /* VADGroupingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VADGroupingTests.swift; sourceTree = "<group>"; };
 		669322B52408C509F7CC31B8 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -143,6 +145,7 @@
 				480E136BAA0F35864BA052D1 /* AuraNote.entitlements */,
 				847273DA53ECD3024C3385E2 /* AuraNoteApp.swift */,
 				3BFD8AD8A89CCB37721B6EA7 /* Info.plist */,
+				5B0EE340B2A4D7F49D5899EC /* InfoPlist.strings */,
 				D15FCB94F4190AA5A08823BA /* Models */,
 				D11CFCB8F401FACD62771CC4 /* Resources */,
 				2AE8DD08D8E198AA8A268996 /* Services */,
@@ -311,6 +314,7 @@
 			knownRegions = (
 				Base,
 				en,
+				"zh-Hans",
 			);
 			mainGroup = 3E00E726D491E4E971BEC133;
 			minimizedProjectReferenceProxies = 1;
@@ -334,6 +338,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				392B455C789991452C5B5A33 /* Assets.xcassets in Resources */,
+				4E058590F23121ED076E53C6 /* InfoPlist.strings in Resources */,
 				A2BEF2A15999D58B2E87629E /* hotword_presets.json in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -452,6 +457,7 @@
 		127029D259F8EFF809E27D07 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ARCHS = arm64;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = AuraNote/AuraNote.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
@@ -460,7 +466,7 @@
 				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/Libraries/sherpa-onnx/lib";
 				OTHER_LDFLAGS = "$(inherited) -lsherpa-onnx-c-api";
 				PRODUCT_BUNDLE_IDENTIFIER = com.eastlakestudio.auranote;
-				PRODUCT_NAME = "声纪";
+				PRODUCT_NAME = AuraNote;
 				SDKROOT = auto;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
 				SUPPORTS_MACCATALYST = NO;
@@ -474,6 +480,7 @@
 		34D20466DEA4BFE5F15AC3E1 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ARCHS = arm64;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = AuraNote/AuraNote.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
@@ -482,7 +489,7 @@
 				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/Libraries/sherpa-onnx/lib";
 				OTHER_LDFLAGS = "$(inherited) -lsherpa-onnx-c-api";
 				PRODUCT_BUNDLE_IDENTIFIER = com.eastlakestudio.auranote;
-				PRODUCT_NAME = "声纪";
+				PRODUCT_NAME = AuraNote;
 				SDKROOT = auto;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx";
 				SUPPORTS_MACCATALYST = NO;
@@ -513,7 +520,7 @@
 				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = YES;
 				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/Libraries/sherpa-onnx";
 				TARGETED_DEVICE_FAMILY = "1,2";
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/声纪.app/Contents/MacOS/声纪";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/AuraNote.app/Contents/MacOS/AuraNote";
 			};
 			name = Debug;
 		};
@@ -551,7 +558,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 5;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = J4RT98GF7B;
 				ENABLE_NS_ASSERTIONS = NO;
@@ -566,7 +573,7 @@
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 1.0.0;
+				MARKETING_VERSION = 1.1.4;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -611,7 +618,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 5;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = J4RT98GF7B;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -632,7 +639,7 @@
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 1.0.0;
+				MARKETING_VERSION = 1.1.4;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -664,7 +671,7 @@
 				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = YES;
 				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/Libraries/sherpa-onnx";
 				TARGETED_DEVICE_FAMILY = "1,2";
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/声纪.app/Contents/MacOS/声纪";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/AuraNote.app/Contents/MacOS/AuraNote";
 			};
 			name = Release;
 		};

@@ -170,7 +170,17 @@ struct MeetingInfoSidebar: View {
                 Spacer()
                 // Map 0.05...0.5 to 100...0
                 let percentage = Int((0.5 - settings.vadThreshold) / 0.45 * 100)
-                Text("\(percentage)%").font(.caption).foregroundStyle(.secondary)
+                let label: String = {
+                    switch percentage {
+                    case 0..<25:  return "稳定"
+                    case 25..<50: return "偏稳定"
+                    case 50..<75: return "偏灵敏"
+                    default:      return "灵敏"
+                    }
+                }()
+                Text("\(percentage)%  \(label)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
             Slider(
                 value: Binding(
@@ -181,6 +191,16 @@ struct MeetingInfoSidebar: View {
             )
             .controlSize(.small)
             .help("调节会议录音时的拾音灵敏度：向右更灵敏（能拾取小声说话），向左更稳定（过滤环境底噪）。")
+            // 两端说明标签
+            HStack {
+                Label("过滤底噪", systemImage: "speaker.slash")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary.opacity(0.7))
+                Spacer()
+                Label("拾取小声", systemImage: "ear")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary.opacity(0.7))
+            }
         }
     }
 

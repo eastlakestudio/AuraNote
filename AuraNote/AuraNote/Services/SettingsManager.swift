@@ -132,9 +132,9 @@ final class SettingsManager {
         return modelPath + "/models/funasr/" + subpath
     }
     
-    /// FunASR 在线 Paraformer 模型目录（流式实时转写）
+    /// FunASR 在线（伪流式）模型目录 — 与离线共用同一模型
     var funasrOnlineModelDir: String {
-        return funasrDir("streaming-paraformer-bilingual-zh-en")
+        return funasrOfflineModelDir
     }
     
     /// FunASR 离线 Paraformer 模型目录（高精度整文件转写，带词级时间戳）
@@ -162,12 +162,9 @@ final class SettingsManager {
         return modelPath + "/models/funasr/" + subpath
     }
     
-    /// FunASR 在线模型是否已下载
+    /// FunASR 在线（伪流式）模型是否可用 — 与离线共用同一模型
     var isFunASROnlineAvailable: Bool {
-        let dir = funasrOnlineModelDir
-        return FileManager.default.fileExists(atPath: dir + "/encoder.int8.onnx")
-            && FileManager.default.fileExists(atPath: dir + "/decoder.int8.onnx")
-            && FileManager.default.fileExists(atPath: dir + "/tokens.txt")
+        return isFunASROfflineAvailable
     }
     
     /// FunASR 离线模型是否已下载

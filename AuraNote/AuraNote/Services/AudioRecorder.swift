@@ -42,10 +42,11 @@ final class AudioRecorder {
     private var pauseTimer: Timer?                  // 静默计时器，触发后切割片段
     private var incrementalClustering = IncrementalSpeakerClustering()  // 增量声纹聚类（同会议未知说话人自动关联）
 
-    // FunASR 流式转写（Paraformer 在线识别）
+    // FunASR 伪流式转写
     private var funasrAccumulatedText: String = ""  // 当前 VAD 片段期间累积的转写文本
-    private var funasrDecodeTimer: Timer?            // 流式解码轮询定时器
-    private var funasrStreamCreated = false           // 在线流是否已创建
+    private var funasrDecodeTimer: Timer?            // 伪流式推理轮询定时器
+    private var funasrStreamCreated = false           // 伪流式缓冲区是否已创建
+    private var isInferring = false                   // 推理防重入锁：避免上一次离线推理未完成时又发起新一次
 
     // 30 秒连续 VAD 攒批声纹提取队列
     private var pendingVoiceprintChunks: [AudioChunk] = []
@@ -196,10 +197,13 @@ final class AudioRecorder {
             }
         }
 
-        // FunASR 流式解码轮询定时器（每 0.2s 获取增量文本）
+        // 伪流式推理轮询定时器：频率跟随 liveTranscribeInterval（默认 1.5s）
+        // 注意：离线推理每次约 200~500ms，0.2s 轮询会产生大量并发任务堆积
         funasrDecodeTimer?.invalidate()
-        funasrDecodeTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
-            guard let self = self, self.funasrStreamCreated else { return }
+        let decodeInterval = Double(SettingsManager.shared.liveTranscribeInterval)
+        funasrDecodeTimer = Timer.scheduledTimer(withTimeInterval: decodeInterval, repeats: true) { [weak self] _ in
+            guard let self = self, self.funasrStreamCreated, !self.isInferring else { return }
+            self.isInferring = true
             Task { [weak self] in
                 guard let self = self else { return }
                 if let incremental = await FunASRService.shared.decodeStreamIncremental(), !incremental.isEmpty {
@@ -207,6 +211,7 @@ final class AudioRecorder {
                         self.funasrAccumulatedText += incremental
                     }
                 }
+                await MainActor.run { self.isInferring = false }
             }
         }
 
@@ -235,21 +240,12 @@ final class AudioRecorder {
         funasrDecodeTimer?.invalidate()
         funasrDecodeTimer = nil
 
-        // 刷新 FunASR 流式识别的最后文本
+        // 刷新伪流式识别的最后文本（inputFinished 内部触发最终推理，无需循环追加）
         if funasrStreamCreated {
             Task { [weak self] in
                 guard let self = self else { return }
+                // inputFinished() 内部调用一次 decodeStreamIncremental()，确保尾帧不丢失
                 await FunASRService.shared.inputFinished()
-                // 解码剩余帧
-                for _ in 0..<5 {
-                    if let text = await FunASRService.shared.decodeStream(), !text.isEmpty {
-                        let incremental = text
-                        await MainActor.run {
-                            self.funasrAccumulatedText += incremental
-                        }
-                    }
-                    try? await Task.sleep(nanoseconds: 50_000_000)
-                }
                 await FunASRService.shared.resetOnlineStream()
                 await MainActor.run {
                     self.funasrStreamCreated = false
@@ -422,6 +418,9 @@ final class AudioRecorder {
         updatedChunk.isTranscribing = false
         audioChunks.append(updatedChunk)
         funasrAccumulatedText = ""  // 重置累积文本，准备下一段
+        // 清空伪流式缓冲区：让下一个 VAD 段从空缓冲区重新开始，
+        // 避免离线 Paraformer 对旧音频重复推理导致文本重复
+        Task { await FunASRService.shared.resetOnlineStream() }
 
         // 异步投递声纹提取
         if !funasrText.isEmpty {

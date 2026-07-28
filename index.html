@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AuraNote · 听纪 — 端侧离线 AI 会议纪要</title>
+<style>
+:root {
+  --bg: #0d1117;
+  --card: #161b22;
+  --border: #30363d;
+  --text: #c9d1d9;
+  --muted: #8b949e;
+  --accent: #58a6ff;
+  --green: #3fb950;
+  --orange: #d2991d;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Microsoft YaHei", "Helvetica Neue", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.7;
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 48px 24px 64px;
+  font-size: 15px;
+}
+.logo { font-size: 32px; font-weight: 700; margin-bottom: 4px; color: #fff; }
+.logo span { color: var(--accent); }
+.tagline { color: var(--muted); font-size: 16px; margin-bottom: 24px; }
+.badges { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:32px; }
+.badge { padding: 3px 10px; border-radius: 12px; font-size: 12px; font-weight: 500; }
+.badge-macos { background: #1f6feb22; color: #58a6ff; border: 1px solid #1f6feb44; }
+.badge-ios { background: #1f6feb22; color: #58a6ff; border: 1px solid #1f6feb44; }
+.badge-swift { background: #f0513822; color: #f0883e; border: 1px solid #f0513844; }
+.badge-ver { background: #3fb95022; color: #3fb950; border: 1px solid #3fb95044; }
+.badge-privacy { background: #d2991d22; color: #d2991d; border: 1px solid #d2991d44; }
+.badge-appstore { background: #8b5cf622; color: #a78bfa; border: 1px solid #8b5cf644; }
+h1 { font-size: 22px; font-weight: 600; margin: 32px 0 16px; color: #f0f6fc; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+h2 { font-size: 17px; font-weight: 600; margin: 20px 0 10px; color: #e6edf3; }
+p, li { color: var(--text); }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+ul, ol { padding-left: 20px; margin: 8px 0; }
+li { margin: 4px 0; }
+code { background: #1c2128; padding: 2px 6px; border-radius: 4px; font-size: 13px; color: #e6edf3; border: 1px solid var(--border); }
+table { width:100%; border-collapse: collapse; margin: 12px 0; font-size: 14px; }
+th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+th { color: var(--muted); font-weight: 500; }
+pre { background: #161b22; border: 1px solid var(--border); border-radius: 8px; padding: 16px; overflow-x: auto; font-size: 13px; line-height: 1.6; margin: 12px 0; }
+.code { color: #c9d1d9; }
+.code .cmt { color: #8b949e; }
+.code .str { color: #a5d6ff; }
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 20px; margin: 16px 0; }
+.card-title { font-weight: 600; font-size: 15px; margin-bottom: 8px; color: #f0f6fc; }
+.features { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.feat { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+.feat h3 { font-size: 14px; margin-bottom: 6px; color: #f0f6fc; }
+.feat p { font-size: 13px; color: var(--muted); line-height: 1.5; }
+.footer { text-align: center; color: var(--muted); font-size: 13px; margin-top: 48px; padding-top: 24px; border-top: 1px solid var(--border); }
+.lang-switch { position: absolute; top: 20px; right: 24px; }
+.lang-btn { background: var(--card); border: 1px solid var(--border); color: var(--text); padding: 4px 12px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+.lang-btn:hover { border-color: var(--accent); color: var(--accent); }
+.lang-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.pipeline { font-size: 13px; line-height: 1.8; color: var(--muted); }
+.pipeline .hl { color: var(--accent); font-weight: 500; }
+.pipeline .arrow { color: var(--muted); margin: 0 4px; }
+.pipeline .pipe { color: var(--green); }
+@media (max-width: 640px) {
+  .features { grid-template-columns: 1fr; }
+  body { padding: 24px 16px 48px; }
+}
+</style>
+</head>
+<body>
+
+<div class="lang-switch">
+  <button class="lang-btn" onclick="setLang('zh')" id="btn-zh">中文</button>
+  <button class="lang-btn" onclick="setLang('en')" id="btn-en">EN</button>
+</div>
+
+<!-- ======== 中文 ======== -->
+<div id="zh" class="lang-content">
+
+<div class="logo">AuraNote · <span>听纪</span></div>
+<div class="tagline">端侧离线 AI 会议纪要 — 实时转写 · 声纹分离 · 全程本地</div>
+
+<div class="badges">
+  <span class="badge badge-macos">macOS 14+</span>
+  <span class="badge badge-ios">iOS 17+</span>
+  <span class="badge badge-swift">Swift 5.9</span>
+  <span class="badge badge-ver">v1.1.4</span>
+  <span class="badge badge-privacy">隐私优先</span>
+  <span class="badge badge-appstore">App Store</span>
+</div>
+
+<h1>产品简介</h1>
+
+<p><strong>听纪（AuraNote）</strong> 是一款<strong>完全本地离线运行</strong>的智能会议纪要应用。基于 FunASR（sherpa-onnx）语音识别引擎与 Pyannote 3.0 声纹分离技术，所有音频数据均在本地处理，<strong>无需联网，你的会议内容永远不会离开你的设备</strong>。</p>
+
+<h2>核心功能</h2>
+
+<div class="features">
+  <div class="feat">
+    <h3>🎙️ 实时流式转写</h3>
+    <p>基于 Paraformer Online 的毫秒级流式语音转文字，录音过程中实时上屏，自动标点恢复。</p>
+  </div>
+  <div class="feat">
+    <h3>📁 音频文件导入</h3>
+    <p>支持 WAV / MP3 / M4A / FLAC 等多种格式，自动提取录制时间元数据，全自动离线分析流水线。</p>
+  </div>
+  <div class="feat">
+    <h3>🧑‍🤝‍🧑 声纹分离</h3>
+    <p>三级声纹分离：能量 VAD → Pyannote 3.0 Neural VAD → eres2net 512维声纹提取 + 增量聚类。多说话人自动标注，已知联系人自动匹配。</p>
+  </div>
+  <div class="feat">
+    <h3>📚 声纹人脉库</h3>
+    <p>本地 SQLite 持久化联系人声纹向量，越用越准。支持手动创建、编辑和管理联系人档案。</p>
+  </div>
+  <div class="feat">
+    <h3>🤝 会议管理</h3>
+    <p>会议元数据管理、同主题延续录音、完整历史记录持久化存储。</p>
+  </div>
+  <div class="feat">
+    <h3>🔥 热词注入</h3>
+    <p>内置热词预设管理器，录音前选择行业分类，ASR 识别时自动注入，大幅提升专业术语准确率。</p>
+  </div>
+  <div class="feat">
+    <h3>⚙️ 转写审阅</h3>
+    <p>审阅模式下支持手动编辑文本、调整说话人标签，展示会议元数据与参会人统计。</p>
+  </div>
+  <div class="feat">
+    <h3>🏠 离线沙盒存储</h3>
+    <p>全部数据存储于 App 沙盒 Documents 目录，绝不上传，杜绝隐私泄露。</p>
+  </div>
+</div>
+
+<h1>技术架构</h1>
+
+<table>
+  <tr><th>层级</th><th>技术</th></tr>
+  <tr><td>UI 框架</td><td>SwiftUI（macOS 14+ / iOS 17+）</td></tr>
+  <tr><td>数据库</td><td>SQLite（本地沙盒）</td></tr>
+  <tr><td>实时 ASR</td><td>Paraformer Online（sherpa-onnx 流式）</td></tr>
+  <tr><td>离线 ASR</td><td>Paraformer Offline（sherpa-onnx，token 级时间戳）</td></tr>
+  <tr><td>声纹分割</td><td>Pyannote 3.0 INT8（10ms 帧级）</td></tr>
+  <tr><td>声纹提取</td><td>eres2net（512 维）</td></tr>
+  <tr><td>标点恢复</td><td>CT-Transformer</td></tr>
+  <tr><td>VAD</td><td>Silero VAD + 振幅 VAD</td></tr>
+  <tr><td>推理引擎</td><td>ONNX Runtime（sherpa-onnx 封装）</td></tr>
+</table>
+
+<h1>AI 模型清单</h1>
+
+<table>
+  <tr><th>模型</th><th>大小</th><th>用途</th></tr>
+  <tr><td>Paraformer Online</td><td>~200MB</td><td>流式实时语音转写</td></tr>
+  <tr><td>Paraformer Offline</td><td>~200MB</td><td>离线高精度转写（含 token 时间戳）</td></tr>
+  <tr><td>CT-Transformer</td><td>~30MB</td><td>标点符号恢复</td></tr>
+  <tr><td>Silero VAD</td><td>628KB</td><td>语音活动检测</td></tr>
+  <tr><td>Pyannote 3.0 INT8</td><td>1.5MB</td><td>帧级说话人切换检测</td></tr>
+  <tr><td>eres2net</td><td>~40MB</td><td>512 维声纹向量提取</td></tr>
+</table>
+
+<p style="color:var(--muted);font-size:13px;">所有模型以 ONNX 格式内置于 App Bundle，通过 sherpa-onnx 调用，<strong>无需网络，无需外部依赖</strong>。</p>
+
+<h1>处理流水线</h1>
+
+<pre class="pipeline">
+<span class="hl">实时录音模式：</span>
+  麦克风 → 增益/降噪 → 重采样(16kHz)
+        <span class="arrow">├─→</span> [<span class="pipe">流式 ASR</span>] Paraformer Online → 实时文本
+        <span class="arrow">└─→</span> [<span class="pipe">VAD 切割</span>] 攒批 8s → Pyannote + eres2net → 说话人标签
+  <span class="arrow">↓ 停止录音</span>
+  [<span class="hl">离线精分析</span>] 全量音频 → Pyannote + eres2net + 增量聚类
+            <span class="arrow">↓ 声纹 chunk</span>
+         Paraformer Offline → 高精度转写 → 声纹对齐 → 联系人匹配
+
+<span class="hl">音频导入模式：</span>
+  音频文件 → 元数据提取 → AVAssetReader 解码 → 同下离线精分析流水线
+</pre>
+
+<h1>隐私承诺</h1>
+<ul>
+  <li><strong>零网络传输</strong>：所有音频、文本、声纹数据仅在本地处理</li>
+  <li><strong>沙盒存储</strong>：数据仅存储于 App 沙盒</li>
+  <li><strong>麦克风权限</strong>：用户主动点击录音时才启用</li>
+  <li>详见 <a href="./PRIVACY.md">隐私政策</a></li>
+</ul>
+
+<h1>文档</h1>
+<table>
+  <tr><td><a href="./doc/functional_spec.md">功能规格说明</a></td><td>完整功能规格与处理流水线详解</td></tr>
+  <tr><td><a href="./doc/feature.md">功能需求</a></td><td>产品功能需求概述</td></tr>
+  <tr><td><a href="./doc/pipeline.md">处理流水线</a></td><td>声纹分离与转写处理管线</td></tr>
+  <tr><td><a href="./doc/speaker_diarization_logic.md">声纹分离逻辑</a></td><td>说话人分离算法细节</td></tr>
+  <tr><td><a href="./PRIVACY.md">隐私政策</a></td><td>数据隐私声明</td></tr>
+</table>
+
+<div class="footer">
+  Built by <a href="https://github.com/EastlakeStudio">EastlakeStudio</a> · 数据你做主，隐私不将就
+</div>
+
+</div>
+
+<!-- ======== English ======== -->
+<div id="en" class="lang-content" style="display:none">
+
+<div class="logo">AuraNote · <span>听纪</span></div>
+<div class="tagline">On-Device AI Meeting Minutes — Live Transcription · Voiceprint Diarization · 100% Local</div>
+
+<div class="badges">
+  <span class="badge badge-macos">macOS 14+</span>
+  <span class="badge badge-ios">iOS 17+</span>
+  <span class="badge badge-swift">Swift 5.9</span>
+  <span class="badge badge-ver">v1.1.4</span>
+  <span class="badge badge-privacy">Privacy First</span>
+  <span class="badge badge-appstore">App Store</span>
+</div>
+
+<h1>Overview</h1>
+
+<p><strong>AuraNote (听纪)</strong> is a <strong>fully offline, on-device</strong> intelligent meeting minutes app. Built on FunASR (sherpa-onnx) speech recognition and Pyannote 3.0 voiceprint diarization technology, all audio data is processed locally — <strong>no network required, your meeting content never leaves your device</strong>.</p>
+
+<h2>Core Features</h2>
+
+<div class="features">
+  <div class="feat">
+    <h3>🎙️ Real-Time Streaming ASR</h3>
+    <p>Millisecond-level Paraformer Online streaming transcription with automatic punctuation restoration during recording.</p>
+  </div>
+  <div class="feat">
+    <h3>📁 Audio File Import</h3>
+    <p>Supports WAV / MP3 / M4A / FLAC and more. Auto-extracts recording metadata and triggers offline analysis pipeline.</p>
+  </div>
+  <div class="feat">
+    <h3>🧑‍🤝‍🧑 Speaker Diarization</h3>
+    <p>Three-stage pipeline: Energy VAD → Pyannote 3.0 Neural VAD → eres2net 512-dim embeddings + incremental clustering. Auto-labeling and known-contact matching.</p>
+  </div>
+  <div class="feat">
+    <h3>📚 Voiceprint Library</h3>
+    <p>Persistent local SQLite voiceprint storage. Improves with use. Full contact profile management.</p>
+  </div>
+  <div class="feat">
+    <h3>🤝 Meeting Management</h3>
+    <p>Metadata management, continuous recording for multi-session meetings, persistent history storage.</p>
+  </div>
+  <div class="feat">
+    <h3>🔥 Hotword Injection</h3>
+    <p>Built-in hotword preset manager with industry categories. Auto-injected during ASR for superior domain terminology accuracy.</p>
+  </div>
+  <div class="feat">
+    <h3>⚙️ Transcript Review</h3>
+    <p>Full editing capabilities in review mode. Adjust speaker labels, view metadata and participant statistics.</p>
+  </div>
+  <div class="feat">
+    <h3>🏠 Offline Sandbox Storage</h3>
+    <p>All data stored in App sandbox Documents directory. Never uploaded. Zero privacy leaks.</p>
+  </div>
+</div>
+
+<h1>Tech Stack</h1>
+
+<table>
+  <tr><th>Layer</th><th>Technology</th></tr>
+  <tr><td>UI</td><td>SwiftUI (macOS 14+ / iOS 17+)</td></tr>
+  <tr><td>Database</td><td>SQLite (local sandbox)</td></tr>
+  <tr><td>Online ASR</td><td>Paraformer Online (sherpa-onnx streaming)</td></tr>
+  <tr><td>Offline ASR</td><td>Paraformer Offline (sherpa-onnx, token-level timestamps)</td></tr>
+  <tr><td>Segmentation</td><td>Pyannote 3.0 INT8 (10ms frame-level)</td></tr>
+  <tr><td>Embedding</td><td>eres2net (512-dim)</td></tr>
+  <tr><td>Punctuation</td><td>CT-Transformer</td></tr>
+  <tr><td>VAD</td><td>Silero VAD + Amplitude VAD</td></tr>
+  <tr><td>Inference</td><td>ONNX Runtime (via sherpa-onnx)</td></tr>
+</table>
+
+<h1>AI Models</h1>
+
+<table>
+  <tr><th>Model</th><th>Size</th><th>Purpose</th></tr>
+  <tr><td>Paraformer Online</td><td>~200MB</td><td>Streaming real-time ASR</td></tr>
+  <tr><td>Paraformer Offline</td><td>~200MB</td><td>High-precision offline transcription with timestamps</td></tr>
+  <tr><td>CT-Transformer</td><td>~30MB</td><td>Punctuation restoration</td></tr>
+  <tr><td>Silero VAD</td><td>628KB</td><td>Voice activity detection</td></tr>
+  <tr><td>Pyannote 3.0 INT8</td><td>1.5MB</td><td>Frame-level speaker change detection</td></tr>
+  <tr><td>eres2net</td><td>~40MB</td><td>512-dim voiceprint embedding extraction</td></tr>
+</table>
+
+<p style="color:var(--muted);font-size:13px;">All models are bundled as ONNX in the App Bundle via sherpa-onnx — <strong>no network, no external dependencies</strong>.</p>
+
+<h1>Processing Pipeline</h1>
+
+<pre class="pipeline">
+<span class="hl">Live Recording Mode:</span>
+  Mic → Gain/Denoise → Resample (16kHz)
+      <span class="arrow">├─→</span> [<span class="pipe">Streaming ASR</span>] Paraformer Online → Real-time text
+      <span class="arrow">└─→</span> [<span class="pipe">VAD Cuts</span>] Batch 8s → Pyannote + eres2net → Speaker labels
+  <span class="arrow">↓ Stop Recording</span>
+  [<span class="hl">Offline Refinement</span>] Full audio → Pyannote + eres2net + Clustering
+              <span class="arrow">↓ Voiceprint chunks</span>
+         Paraformer Offline → High-precision → Alignment → Contact matching
+
+<span class="hl">File Import Mode:</span>
+  Audio file → Metadata extraction → AVAssetReader decode → Same offline pipeline
+</pre>
+
+<h1>Privacy Commitment</h1>
+<ul>
+  <li><strong>Zero network transmission</strong> — all audio, text, and voiceprint data stays local</li>
+  <li><strong>Sandbox storage</strong> — data stored exclusively in App sandbox</li>
+  <li><strong>Microphone consent</strong> — only activated when user starts recording</li>
+  <li>See <a href="./PRIVACY.md">Privacy Policy</a></li>
+</ul>
+
+<h1>Documentation</h1>
+<table>
+  <tr><td><a href="./doc/functional_spec.md">Functional Specification</a></td><td>Complete feature and pipeline specification</td></tr>
+  <tr><td><a href="./doc/feature.md">Feature Requirements</a></td><td>Product feature overview</td></tr>
+  <tr><td><a href="./doc/pipeline.md">Processing Pipeline</a></td><td>Diarization and transcription pipeline</td></tr>
+  <tr><td><a href="./doc/speaker_diarization_logic.md">Diarization Logic</a></td><td>Speaker separation algorithm details</td></tr>
+  <tr><td><a href="./PRIVACY.md">Privacy Policy</a></td><td>Data privacy statement</td></tr>
+</table>
+
+<div class="footer">
+  Built by <a href="https://github.com/EastlakeStudio">EastlakeStudio</a> · Your data, your privacy
+</div>
+
+</div>
+
+<script>
+function setLang(lang) {
+  document.querySelectorAll('.lang-content').forEach(el => el.style.display = 'none');
+  document.getElementById(lang).style.display = 'block';
+  document.querySelectorAll('.lang-btn').forEach(el => el.classList.remove('active'));
+  document.getElementById('btn-' + lang).classList.add('active');
+  localStorage.setItem('auranote-lang', lang);
+}
+// Auto-detect browser language
+(function() {
+  var saved = localStorage.getItem('auranote-lang');
+  if (saved) { setLang(saved); return; }
+  var navLang = (navigator.language || navigator.userLanguage || '').toLowerCase();
+  setLang(navLang.startsWith('zh') ? 'zh' : 'en');
+})();
+</script>
+
+</body>
+</html>

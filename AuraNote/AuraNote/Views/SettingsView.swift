@@ -14,6 +14,8 @@ let zhLocale: [String: String] = [
     "about_copyright": "© 2026 Eastlake Studio. 保留所有权利。",
     "about_feature_desc": "声纪是一款完全本地离线运行的智能会议纪要系统。\n基于 FunASR 语音识别引擎与 sherpa-onnx 声纹分离技术，\n支持实时录音转写、离线高精度转写、多说话人声纹分离与匹配。\n所有音频数据均在本地处理，无需联网，保障隐私安全。",
     "about_feature_desc_en": "AuraNote is a fully offline intelligent meeting minutes system.\nPowered by FunASR speech recognition and sherpa-onnx voiceprint diarization,\nit supports real-time transcription, offline high-accuracy transcription,\nand multi-speaker voiceprint separation & matching.\nAll audio data is processed locally — no internet required, ensuring complete privacy.",
+    "about_menu": "关于声纪",
+    "about_window_title": "关于声纪",
     "copyright": "© 2026 Eastlake Studio",
     "model_name": "模型名称",
     "zhipu": "智谱AI",
@@ -375,6 +377,8 @@ let enLocale: [String: String] = [
     "about_copyright": "© 2026 Eastlake Studio. All rights reserved.",
     "about_feature_desc": "AuraNote is a fully offline intelligent meeting minutes system.\nPowered by FunASR speech recognition and sherpa-onnx voiceprint diarization,\nit supports real-time transcription, offline high-accuracy transcription,\nand multi-speaker voiceprint separation & matching.\nAll audio data is processed locally — no internet required, ensuring complete privacy.",
     "about_feature_desc_en": "AuraNote is a fully offline intelligent meeting minutes system.\nPowered by FunASR speech recognition and sherpa-onnx voiceprint diarization,\nit supports real-time transcription, offline high-accuracy transcription,\nand multi-speaker voiceprint separation & matching.\nAll audio data is processed locally — no internet required, ensuring complete privacy.",
+    "about_menu": "About AuraNote",
+    "about_window_title": "About AuraNote",
     "copyright": "© 2026 Eastlake Studio",
     "model_name": "Model Name",
     "zhipu": "Zhipu AI",
@@ -774,25 +778,9 @@ struct SettingsView: View {
                 .font(.headline)
                 .foregroundStyle(.teal)
 
-            // 模型状态汇总 (一行显示)
+            // 模型状态汇总（单 Paraformer 模型，同时用于实时转写和离线高精度）
             HStack(spacing: 0) {
-                // 流式转写
-                HStack(spacing: 8) {
-                    Circle()
-                        .fill(settings.isFunASROnlineAvailable ? Color.green : Color.orange)
-                        .frame(width: 6, height: 6)
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(loc("model_online_label") + (settings.isFunASROnlineAvailable ? loc("model_ready") : loc("model_not_found")))
-                            .font(.caption)
-                            .foregroundStyle(settings.isFunASROnlineAvailable ? Color.secondary : Color.orange)
-                        Text("streaming-paraformer-bilingual-zh-en")
-                            .font(.system(size: 10, weight: .regular, design: .monospaced))
-                            .foregroundStyle(Color.secondary.opacity(0.65))
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-                // 离线高精度
+                // Paraformer 模型（实时 + 离线共用）
                 HStack(spacing: 8) {
                     Circle()
                         .fill(settings.isFunASROfflineAvailable ? Color.green : Color.orange)
@@ -804,6 +792,9 @@ struct SettingsView: View {
                         Text("paraformer-zh-2024-03-09")
                             .font(.system(size: 10, weight: .regular, design: .monospaced))
                             .foregroundStyle(Color.secondary.opacity(0.65))
+                        Text("实时 + 离线共用")
+                            .font(.system(size: 9))
+                            .foregroundStyle(Color.secondary.opacity(0.45))
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -962,7 +953,7 @@ struct SettingsView: View {
                         
                         LazyVGrid(columns: algoColumns, spacing: 10) {
                             algoCell(loc("clustering_threshold"), value: $settings.clusteringThreshold,
-                                     range: 0.5...1.5, fmt: "%.2f",
+                                     range: 0.5...1.0, fmt: "%.2f",
                                      hintLow: loc("hint_more_speakers"), hintHigh: loc("hint_fewer_speakers"))
                             algoCell(loc("incremental_clustering_distance"), value: $settings.incrementalClusteringDistance,
                                      range: 0.1...0.5, fmt: "%.2f",
