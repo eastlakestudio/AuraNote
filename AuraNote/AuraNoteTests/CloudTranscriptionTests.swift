@@ -298,6 +298,190 @@ final class CloudTranscriptionTests: XCTestCase {
         XCTAssertEqual(results[1].text, "没问题，赞同。")
     }
 
+    // MARK: - 离线宏观分块转写与 429 退避重试测试
+
+    func testSingleShotShortAudioOfflineTranscription() async throws {
+        let jsonResponse = """
+        [
+          {"speaker": "李总", "text": "下季度的预算方案准备好了吗？"},
+          {"speaker": "王经理", "text": "已经做好了，马上同步给各位。"}
+        ]
+        """
+        MockTranscriptionURLProtocol.mockContent = jsonResponse
+        MockTranscriptionURLProtocol.responseStatusCodes = []
+        MockTranscriptionURLProtocol.requestCount = 0
+
+        let mockSession = URLSession(configuration: mockSessionConfig(MockTranscriptionURLProtocol.self))
+        let service = CloudTranscriptionService(session: mockSession)
+
+        let model = CloudModel(
+            id: "gemini-transcribe",
+            name: "Google Gemini 3.5 Transcribe",
+            provider: "Google",
+            apiURL: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+            modelName: "gemini-2.5-flash",
+            supportsAudio: true,
+            audioEndpointType: .chatAudio
+        )
+
+        // 30 秒短音频（<= 60 秒）
+        let samples = [Float](repeating: 0.05, count: 30 * 16000)
+        var progressValues: [Double] = []
+        var emittedChunks: [[TranscriptSegment]] = []
+
+        let segments = try await service.transcribeOfflineAudio(
+            samples: samples,
+            sampleRate: 16000,
+            meetingId: "test_meeting_short",
+            contextSpeakers: ["李总", "王经理"],
+            model: model,
+            apiKey: "mock-key",
+            windowDurationSeconds: 50.0,
+            pacingDelaySeconds: 0.01,
+            onProgress: { p, _, _ in
+                progressValues.append(p)
+            },
+            onSegmentsChunk: { chunk in
+                emittedChunks.append(chunk)
+            }
+        )
+
+        // 验证只发起了 1 次网络请求（单次整段直出，杜绝微切片并发）
+        XCTAssertEqual(MockTranscriptionURLProtocol.requestCount, 1)
+        XCTAssertEqual(segments.count, 2)
+        XCTAssertEqual(segments[0].speakerLabel, "李总")
+        XCTAssertEqual(segments[0].text, "下季度的预算方案准备好了吗？")
+        XCTAssertEqual(segments[0].startTime, 0.0)
+        XCTAssertEqual(segments[1].speakerLabel, "王经理")
+        XCTAssertEqual(segments[1].endTime, 30.0)
+        XCTAssertEqual(progressValues.last, 1.0)
+        XCTAssertEqual(emittedChunks.count, 1)
+    }
+
+    func testMacroWindowLongAudioOfflineTranscription() async throws {
+        let jsonResponse = """
+        [
+          {"speaker": "演讲者", "text": "这是宏观大窗口转写的文本片段。"}
+        ]
+        """
+        MockTranscriptionURLProtocol.mockContent = jsonResponse
+        MockTranscriptionURLProtocol.responseStatusCodes = []
+        MockTranscriptionURLProtocol.requestCount = 0
+
+        let mockSession = URLSession(configuration: mockSessionConfig(MockTranscriptionURLProtocol.self))
+        let service = CloudTranscriptionService(session: mockSession)
+
+        let model = CloudModel(
+            id: "gemini-transcribe",
+            name: "Google Gemini 3.5 Transcribe",
+            provider: "Google",
+            apiURL: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+            modelName: "gemini-2.5-flash",
+            supportsAudio: true,
+            audioEndpointType: .chatAudio
+        )
+
+        // 100 秒长音频（> 60 秒，50 秒窗口划分为 2 个大窗口）
+        let samples = [Float](repeating: 0.05, count: 100 * 16000)
+        var progressUpdates = 0
+
+        let segments = try await service.transcribeOfflineAudio(
+            samples: samples,
+            sampleRate: 16000,
+            meetingId: "test_meeting_long",
+            model: model,
+            apiKey: "mock-key",
+            windowDurationSeconds: 50.0,
+            pacingDelaySeconds: 0.01,
+            onProgress: { p, _, _ in
+                progressUpdates += 1
+            }
+        )
+
+        // 100 秒切分为 2 个 50 秒宏观窗口，共 2 次请求
+        XCTAssertEqual(MockTranscriptionURLProtocol.requestCount, 2)
+        XCTAssertEqual(segments.count, 2)
+        XCTAssertEqual(segments[0].startTime, 0.0)
+        XCTAssertEqual(segments[0].endTime, 50.0)
+        XCTAssertEqual(segments[1].startTime, 50.0)
+        XCTAssertEqual(segments[1].endTime, 100.0)
+        XCTAssertGreaterThanOrEqual(progressUpdates, 2)
+    }
+
+    func testHttp429ExponentialBackoffRetry() async throws {
+        MockTranscriptionURLProtocol.mockContent = "429 退避重试成功输出文本。"
+        // 前两次 429 报错，第三次 200 成功
+        MockTranscriptionURLProtocol.responseStatusCodes = [429, 429, 200]
+        MockTranscriptionURLProtocol.requestCount = 0
+
+        let mockSession = URLSession(configuration: mockSessionConfig(MockTranscriptionURLProtocol.self))
+        let service = CloudTranscriptionService(session: mockSession)
+        await service.setRetryDelay(0.01)
+
+        let model = CloudModel(
+            id: "gemini-transcribe",
+            name: "Google Gemini 3.5 Transcribe",
+            provider: "Google",
+            apiURL: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+            modelName: "gemini-2.5-flash",
+            supportsAudio: true,
+            audioEndpointType: .chatAudio
+        )
+
+        let result = try await service.transcribeSamples(
+            samples: [Float](repeating: 0.05, count: 3200),
+            sampleRate: 16000,
+            hotwords: "",
+            model: model,
+            apiKey: "mock-key"
+        )
+
+        XCTAssertEqual(result, "429 退避重试成功输出文本。")
+        XCTAssertEqual(MockTranscriptionURLProtocol.requestCount, 3)
+    }
+
+    func testHttp429ExhaustedRetriesThrows() async throws {
+        // 连续 4 次 429（超出 maxRetries 3 次重试）
+        MockTranscriptionURLProtocol.responseStatusCodes = [429, 429, 429, 429]
+        MockTranscriptionURLProtocol.requestCount = 0
+
+        let mockSession = URLSession(configuration: mockSessionConfig(MockTranscriptionURLProtocol.self))
+        let service = CloudTranscriptionService(session: mockSession)
+        await service.setRetryDelay(0.01)
+
+        let model = CloudModel(
+            id: "gemini-transcribe",
+            name: "Google Gemini 3.5 Transcribe",
+            provider: "Google",
+            apiURL: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+            modelName: "gemini-2.5-flash",
+            supportsAudio: true,
+            audioEndpointType: .chatAudio
+        )
+
+        do {
+            _ = try await service.transcribeSamples(
+                samples: [Float](repeating: 0.05, count: 3200),
+                sampleRate: 16000,
+                hotwords: "",
+                model: model,
+                apiKey: "mock-key"
+            )
+            XCTFail("超出最大重试次数应抛出异常")
+        } catch let error as CloudTranscriptionError {
+            switch error {
+            case .httpError(let statusCode, _):
+                XCTAssertEqual(statusCode, 429)
+            default:
+                XCTFail("错误类型非 httpError 429: \(error)")
+            }
+        } catch {
+            XCTFail("非预期的错误类型: \(error)")
+        }
+
+        XCTAssertEqual(MockTranscriptionURLProtocol.requestCount, 4)
+    }
+
     // MARK: - 本地模型清理测试
 
     func testSettingsManagerRemoveLocalModels() {
@@ -319,6 +503,8 @@ final class CloudTranscriptionTests: XCTestCase {
 
 final class MockTranscriptionURLProtocol: URLProtocol {
     nonisolated(unsafe) static var mockContent: String = "大家好，今天我们进行季度项目复盘评审。"
+    nonisolated(unsafe) static var responseStatusCodes: [Int] = []
+    nonisolated(unsafe) static var requestCount: Int = 0
 
     override class func canInit(with request: URLRequest) -> Bool {
         return true
@@ -329,6 +515,30 @@ final class MockTranscriptionURLProtocol: URLProtocol {
     }
 
     override func startLoading() {
+        MockTranscriptionURLProtocol.requestCount += 1
+        let statusCode: Int
+        if !MockTranscriptionURLProtocol.responseStatusCodes.isEmpty {
+            statusCode = MockTranscriptionURLProtocol.responseStatusCodes.removeFirst()
+        } else {
+            statusCode = 200
+        }
+
+        let url = request.url ?? URL(string: "https://mock.transcribe.api")!
+
+        if statusCode != 200 {
+            let errorData = "{\"error\": {\"code\": \(statusCode), \"message\": \"Rate limit exceeded (15 RPM)\"}}".data(using: .utf8)!
+            let response = HTTPURLResponse(
+                url: url,
+                statusCode: statusCode,
+                httpVersion: "HTTP/1.1",
+                headerFields: ["Content-Type": "application/json"]
+            )!
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: errorData)
+            client?.urlProtocolDidFinishLoading(self)
+            return
+        }
+
         let responseJson: [String: Any] = [
             "id": "mock_chat_123",
             "choices": [
@@ -344,7 +554,7 @@ final class MockTranscriptionURLProtocol: URLProtocol {
 
         guard let responseData = try? JSONSerialization.data(withJSONObject: responseJson),
               let response = HTTPURLResponse(
-                url: request.url ?? URL(string: "https://mock.transcribe.api")!,
+                url: url,
                 statusCode: 200,
                 httpVersion: "HTTP/1.1",
                 headerFields: ["Content-Type": "application/json"]

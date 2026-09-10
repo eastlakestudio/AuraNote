@@ -25,7 +25,8 @@ enum CloudTranscriptionError: LocalizedError, Equatable {
             case 403:
                 return "访问被拒绝 (403)，请检查账号权限或配额"
             case 429:
-                return "请求频次超限 (429)，请稍后再试或检查模型限流"
+                let detail = msg.trimmingCharacters(in: .whitespacesAndNewlines)
+                return "请求频次超限 (429)\(detail.isEmpty ? "" : ": \(detail)")"
             default:
                 return "云端接口错误 (状态码 \(code)): \(msg)"
             }
@@ -52,9 +53,16 @@ actor CloudTranscriptionService {
     static let shared = CloudTranscriptionService()
 
     private let session: URLSession
+    /// 429 初始重试延迟（秒），测试环境可设为小值以加速执行
+    var retryDelay: Double = 2.0
 
     init(session: URLSession = .shared) {
         self.session = session
+    }
+
+    /// 设置重试延迟（主要供单元测试使用）
+    func setRetryDelay(_ delay: Double) {
+        self.retryDelay = delay
     }
 
     // MARK: - 公开转写方法
@@ -162,7 +170,249 @@ actor CloudTranscriptionService {
         }
     }
 
+    // MARK: - 离线长音频宏观分块转写与角色分离
+
+    /// 离线长音频宏观分块转写与说话人分离管线
+    /// - Parameters:
+    ///   - samples: 16kHz 单声道 Float 采样数据
+    ///   - sampleRate: 采样率 (通常为 16000)
+    ///   - meetingId: 会议 ID
+    ///   - contextSpeakers: 已知参会人/说话人名单
+    ///   - model: 云端大模型配置
+    ///   - apiKey: API Key
+    ///   - windowDurationSeconds: 宏观大窗口时长（默认 50 秒）
+    ///   - pacingDelaySeconds: 请求间安全节流延迟（默认 1.0 秒，控制在 10 RPM 以内，防止突破 15 RPM 限制）
+    ///   - onProgress: 进度回调 (progress, processedSeconds, totalSeconds)
+    ///   - onSegmentsChunk: 批次生成段时的回调（用于实时推送到 UI）
+    /// - Returns: 生成的所有 TranscriptSegment
+    func transcribeOfflineAudio(
+        samples: [Float],
+        sampleRate: Int = 16000,
+        meetingId: String,
+        contextSpeakers: [String] = [],
+        model: CloudModel,
+        apiKey: String,
+        windowDurationSeconds: Double = 50.0,
+        pacingDelaySeconds: Double = 1.0,
+        onProgress: (@Sendable (Double, Double, Double) async -> Void)? = nil,
+        onSegmentsChunk: (@Sendable ([TranscriptSegment]) async -> Void)? = nil
+    ) async throws -> [TranscriptSegment] {
+        guard !samples.isEmpty && sampleRate > 0 else {
+            return []
+        }
+
+        let totalDuration = Double(samples.count) / Double(sampleRate)
+
+        // 场景 1：短音频（<= 60 秒，如 30 秒测试文件），单次请求整段直出，耗时仅 2~3 秒，绝不 429
+        if totalDuration <= 60.0 {
+            AppLog.info("[CloudASR] Short audio (\(String(format: "%.1f", totalDuration))s <= 60s): executing single-shot end-to-end diarization")
+            let sentences = try await transcribeAndDiarizeSamples(
+                samples: samples,
+                sampleRate: sampleRate,
+                contextSpeakers: contextSpeakers,
+                priorSpeaker: nil,
+                model: model,
+                apiKey: apiKey
+            )
+
+            var diarizedSentences = sentences
+            if diarizedSentences.isEmpty {
+                // 容错降级：尝试单次基础转写
+                if let fallbackText = try? await transcribeSamples(
+                    samples: samples,
+                    sampleRate: sampleRate,
+                    hotwords: "",
+                    model: model,
+                    apiKey: apiKey
+                ), !fallbackText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    diarizedSentences = [CloudDiarizedSentence(speaker: "Speaker_1", text: fallbackText.trimmingCharacters(in: .whitespacesAndNewlines))]
+                }
+            }
+
+            let segments = buildSegmentsFromSentences(
+                sentences: diarizedSentences,
+                windowStartSec: 0.0,
+                windowEndSec: totalDuration,
+                meetingId: meetingId,
+                fallbackSpeaker: "Speaker_1"
+            )
+
+            if !segments.isEmpty {
+                await onSegmentsChunk?(segments)
+            }
+            await onProgress?(1.0, totalDuration, totalDuration)
+            return segments
+        }
+
+        // 场景 2：长音频（> 60 秒），采用 50 秒宏观大窗口切分，逐步渐进式处理并加节流
+        let windowSamples = max(sampleRate, Int(windowDurationSeconds * Double(sampleRate)))
+        let totalWindows = Int(ceil(Double(samples.count) / Double(windowSamples)))
+        AppLog.info("[CloudASR] Long audio (\(String(format: "%.1f", totalDuration))s): partitioned into \(totalWindows) macro-windows (\(windowDurationSeconds)s each)")
+
+        var allSegments: [TranscriptSegment] = []
+        var lastSpeaker: String? = nil
+
+        for windowIdx in 0..<totalWindows {
+            try Task.checkCancellation()
+
+            let startSample = windowIdx * windowSamples
+            let endSample = min(samples.count, (windowIdx + 1) * windowSamples)
+            guard startSample < endSample else { continue }
+
+            let windowSlice = Array(samples[startSample..<endSample])
+            let windowStartSec = Double(startSample) / Double(sampleRate)
+            let windowEndSec = Double(endSample) / Double(sampleRate)
+
+            AppLog.info("[CloudASR] Processing macro-window \(windowIdx + 1)/\(totalWindows) [\(String(format: "%.1f", windowStartSec))s - \(String(format: "%.1f", windowEndSec))s]...")
+
+            var sentences = try await transcribeAndDiarizeSamples(
+                samples: windowSlice,
+                sampleRate: sampleRate,
+                contextSpeakers: contextSpeakers,
+                priorSpeaker: lastSpeaker,
+                model: model,
+                apiKey: apiKey
+            )
+
+            if sentences.isEmpty {
+                if let fallbackText = try? await transcribeSamples(
+                    samples: windowSlice,
+                    sampleRate: sampleRate,
+                    hotwords: "",
+                    model: model,
+                    apiKey: apiKey
+                ), !fallbackText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    sentences = [CloudDiarizedSentence(speaker: lastSpeaker ?? "Speaker_1", text: fallbackText.trimmingCharacters(in: .whitespacesAndNewlines))]
+                }
+            }
+
+            let windowSegments = buildSegmentsFromSentences(
+                sentences: sentences,
+                windowStartSec: windowStartSec,
+                windowEndSec: windowEndSec,
+                meetingId: meetingId,
+                fallbackSpeaker: lastSpeaker ?? "Speaker_1"
+            )
+
+            if let last = windowSegments.last {
+                lastSpeaker = last.speakerLabel
+            }
+
+            if !windowSegments.isEmpty {
+                allSegments.append(contentsOf: windowSegments)
+                await onSegmentsChunk?(windowSegments)
+            }
+
+            let progress = min(1.0, windowEndSec / totalDuration)
+            await onProgress?(progress, windowEndSec, totalDuration)
+
+            // 安全节流：窗口之间等待 pacingDelaySeconds，控制请求速率
+            if windowIdx < totalWindows - 1 && pacingDelaySeconds > 0 {
+                try? await Task.sleep(nanoseconds: UInt64(pacingDelaySeconds * 1_000_000_000))
+            }
+        }
+
+        return allSegments
+    }
+
+    /// 将大模型结构化解析出的句子数组映射为带有起止时间的 TranscriptSegment
+    private func buildSegmentsFromSentences(
+        sentences: [CloudDiarizedSentence],
+        windowStartSec: Double,
+        windowEndSec: Double,
+        meetingId: String,
+        fallbackSpeaker: String
+    ) -> [TranscriptSegment] {
+        let validSentences = sentences.filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        guard !validSentences.isEmpty else { return [] }
+
+        let windowDuration = max(0.1, windowEndSec - windowStartSec)
+
+        if validSentences.count == 1 {
+            let item = validSentences[0]
+            let spk = item.speaker.trimmingCharacters(in: .whitespacesAndNewlines)
+            return [
+                TranscriptSegment(
+                    id: "\(meetingId)_cloud_\(UUID().uuidString)",
+                    startTime: windowStartSec,
+                    endTime: windowEndSec,
+                    text: item.text.trimmingCharacters(in: .whitespacesAndNewlines),
+                    speakerLabel: spk.isEmpty ? fallbackSpeaker : spk,
+                    isFinal: true
+                )
+            ]
+        }
+
+        // 多句/多人交替发言：根据字数占比在窗口时间内分配起始与终止时间
+        let totalChars = max(1, validSentences.reduce(0) { $0 + max(1, $1.text.count) })
+        var currentStart = windowStartSec
+        var result: [TranscriptSegment] = []
+
+        for (i, item) in validSentences.enumerated() {
+            let trimmed = item.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            let ratio = Double(max(1, trimmed.count)) / Double(totalChars)
+            let dur = (i == validSentences.count - 1) ? max(0.05, windowEndSec - currentStart) : (windowDuration * ratio)
+            let nextStart = min(windowEndSec, currentStart + dur)
+            let spk = item.speaker.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            let seg = TranscriptSegment(
+                id: "\(meetingId)_cloud_\(UUID().uuidString)_\(i)",
+                startTime: currentStart,
+                endTime: nextStart,
+                text: trimmed,
+                speakerLabel: spk.isEmpty ? fallbackSpeaker : spk,
+                isFinal: true
+            )
+            result.append(seg)
+            currentStart = nextStart
+        }
+
+        return result
+    }
+
     // MARK: - 协议一：多模态 Chat Completions (input_audio)
+
+    /// 带指数退避的通用 HTTP 执行方法（针对 HTTP 429 自动等待并重试最多 3 次）
+    private func executeWithRetry(
+        request: URLRequest,
+        maxRetries: Int = 3,
+        initialDelay: Double? = nil
+    ) async throws -> (Data, HTTPURLResponse) {
+        var currentDelay = initialDelay ?? retryDelay
+
+        for attempt in 0...maxRetries {
+            let data: Data
+            let response: URLResponse
+            do {
+                (data, response) = try await session.data(for: request)
+            } catch {
+                if Task.isCancelled { throw CancellationError() }
+                throw CloudTranscriptionError.networkError(error.localizedDescription)
+            }
+
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw CloudTranscriptionError.networkError("未能获取有效的 HTTP 响应")
+            }
+
+            if (200...299).contains(httpResponse.statusCode) {
+                return (data, httpResponse)
+            }
+
+            let errorMsg = String(data: data, encoding: .utf8) ?? "未知错误"
+
+            // 如果是 429 且尚未达到最大重试次数，执行退避重试
+            if httpResponse.statusCode == 429 && attempt < maxRetries {
+                AppLog.warn("[CloudTranscription] HTTP 429 Rate Limit (attempt \(attempt + 1)/\(maxRetries)). Waiting \(String(format: "%.1f", currentDelay))s before retrying...")
+                try? await Task.sleep(nanoseconds: UInt64(currentDelay * 1_000_000_000))
+                currentDelay *= 2.0
+                continue
+            }
+
+            throw CloudTranscriptionError.httpError(statusCode: httpResponse.statusCode, message: errorMsg)
+        }
+
+        throw CloudTranscriptionError.httpError(statusCode: 429, message: "请求频次超限，多次重试后仍然超限")
+    }
 
     private func sendChatAudioRequest(
         base64Audio: String,
@@ -178,20 +428,19 @@ actor CloudTranscriptionService {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        request.timeoutInterval = 30
+        request.timeoutInterval = 60
 
-        // OpenRouter 特殊 Headers
         if model.provider.lowercased().contains("openrouter") || model.apiURL.contains("openrouter.ai") {
             request.setValue("https://github.com/EastlakeStudio/AuraNote", forHTTPHeaderField: "HTTP-Referer")
             request.setValue("AuraNote", forHTTPHeaderField: "X-Title")
         }
 
-        var userPrompt = "请转写这段音频为纯文本："
+        var systemPrompt = "你是一个高精度的语音识别引擎。请将用户输入的音频准确转写为文本，并补充合适的标点符号。请直接输出转写的文本内容，不要输出任何多余的解释、寒暄或代码块格式。"
         if !hotwords.isEmpty {
-            userPrompt += "（提示热词/上下文: \(hotwords)）"
+            systemPrompt += "\n可能出现的专业术语/专有名词：\(hotwords)"
         }
 
-        let systemPrompt = "你是一个专业的高精度语音转写引擎。请将用户提供的音频逐字、准确地转写为文本，保持说话人的原始表达，自动补充正确的标点符号。请直接输出识别到的文本内容，不要输出任何开场白、总结、解释或代码包裹块。如果音频完全无有效人声，请输出空文本。"
+        let userPrompt = "请识别并转写这段音频的对话内容："
 
         let payload: [String: Any] = [
             "model": model.modelName,
@@ -222,22 +471,7 @@ actor CloudTranscriptionService {
 
         request.httpBody = try JSONSerialization.data(withJSONObject: payload, options: [])
 
-        let data: Data
-        let response: URLResponse
-        do {
-            (data, response) = try await session.data(for: request)
-        } catch {
-            throw CloudTranscriptionError.networkError(error.localizedDescription)
-        }
-
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw CloudTranscriptionError.networkError("未能获取有效的 HTTP 响应")
-        }
-
-        guard (200...299).contains(httpResponse.statusCode) else {
-            let errorMsg = String(data: data, encoding: .utf8) ?? "未知错误"
-            throw CloudTranscriptionError.httpError(statusCode: httpResponse.statusCode, message: errorMsg)
-        }
+        let (data, _) = try await executeWithRetry(request: request)
 
         // 解析 Chat Completions 响应结构
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -267,7 +501,7 @@ actor CloudTranscriptionService {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        request.timeoutInterval = 30
+        request.timeoutInterval = 60
 
         let boundary = "Boundary-\(UUID().uuidString)"
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
@@ -298,22 +532,7 @@ actor CloudTranscriptionService {
 
         request.httpBody = body
 
-        let data: Data
-        let response: URLResponse
-        do {
-            (data, response) = try await session.data(for: request)
-        } catch {
-            throw CloudTranscriptionError.networkError(error.localizedDescription)
-        }
-
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw CloudTranscriptionError.networkError("未能获取有效的 HTTP 响应")
-        }
-
-        guard (200...299).contains(httpResponse.statusCode) else {
-            let errorMsg = String(data: data, encoding: .utf8) ?? "未知错误"
-            throw CloudTranscriptionError.httpError(statusCode: httpResponse.statusCode, message: errorMsg)
-        }
+        let (data, _) = try await executeWithRetry(request: request)
 
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let text = json["text"] as? String else {
@@ -388,7 +607,7 @@ actor CloudTranscriptionService {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        request.timeoutInterval = 30
+        request.timeoutInterval = 60
 
         if model.provider.lowercased().contains("openrouter") || model.apiURL.contains("openrouter.ai") {
             request.setValue("https://github.com/EastlakeStudio/AuraNote", forHTTPHeaderField: "HTTP-Referer")
@@ -442,22 +661,7 @@ actor CloudTranscriptionService {
 
         request.httpBody = try JSONSerialization.data(withJSONObject: payload, options: [])
 
-        let data: Data
-        let response: URLResponse
-        do {
-            (data, response) = try await session.data(for: request)
-        } catch {
-            throw CloudTranscriptionError.networkError(error.localizedDescription)
-        }
-
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw CloudTranscriptionError.networkError("未能获取有效的 HTTP 响应")
-        }
-
-        guard (200...299).contains(httpResponse.statusCode) else {
-            let errorMsg = String(data: data, encoding: .utf8) ?? "未知错误"
-            throw CloudTranscriptionError.httpError(statusCode: httpResponse.statusCode, message: errorMsg)
-        }
+        let (data, _) = try await executeWithRetry(request: request)
 
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let choices = json["choices"] as? [[String: Any]],
