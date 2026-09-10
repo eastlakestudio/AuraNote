@@ -28,6 +28,7 @@ final class RecordingViewModel {
     var formCreatedAt = Date()
     var formSpeechLang = UserDefaults.standard.string(forKey: "speech_language") ?? "zh"
     var formHotwordCategories: Set<String> = []
+    var formTranscriptionEngine: TranscriptionEngineType = SettingsManager.shared.transcriptionEngine
 
     enum RecordingMode {
         case liveRecording
@@ -173,11 +174,17 @@ final class RecordingViewModel {
             if !customHws.isEmpty { contextualWords.append(customHws) }
         }
         let finalOnlineHotwords = contextualWords.joined(separator: " ")
+        AppLog.info("[Recording] Hotwords assembled: '\(finalOnlineHotwords)' (cats=\(Array(hotwordCats)))")
 
         // 注：FunASR 在线模型由 AudioRecorder.startRecording() 内部按需初始化
         // 4. 启动录音（音频直接写入文件）
         do {
-            try audioRecorder.startRecording(meetingId: meeting.id, savePath: audioPath, hotwords: finalOnlineHotwords)
+            try audioRecorder.startRecording(
+                meetingId: meeting.id,
+                savePath: audioPath,
+                hotwords: finalOnlineHotwords,
+                engine: formTranscriptionEngine
+            )
         } catch {
             errorAlert = "\(loc("err_start_record_failed"))\n\(error.localizedDescription)"
             return
@@ -216,14 +223,15 @@ final class RecordingViewModel {
         durationTimer?.invalidate()
         durationTimer = nil
 
-        // 必须在后台线程停止音频引擎，避免主线程死锁
-        // installTap 回调内使用 DispatchQueue.main.async 投递工作到主线程，
-        // 若在主线程调用 removeTap/stop，引擎内部清理可能等待回调完成 → 死锁
         let recorder = audioRecorder
+        // 音频引擎 stop 必须在后台线程（避免与 main queue 死锁）
+        // stopRecordingEngine 只停引擎不碰状态，避免数据竞争
         let duration: Int = DispatchQueue.global().sync {
-            recorder.stopRecording()
+            recorder.stopRecordingEngine()
         }
         AppLog.info("Recording engine stopped, duration=\(duration)s")
+
+        recorder.finalizeRecording()
 
         // 更新数据库状态并补充音频路径
         if let meeting = currentMeeting {
@@ -271,7 +279,6 @@ final class RecordingViewModel {
         }
 
         // 延迟 0.15 秒改变状态，确保 macOS 文件句柄从写入锁定状态安全释放
-        // 在切换状态前释放原始音频缓存：WAV 已写入磁盘，后续分析从文件读取，内存拷贝不再需要
         self.audioChunks = []
         audioRecorder.audioChunks = []
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
@@ -288,8 +295,8 @@ final class RecordingViewModel {
         runOfflineTranscription(for: meeting.id, audioURL: audioURL)
     }
 
-    func retryOfflineTranscription(for meetingId: String, audioURL: URL) {
-        runOfflineTranscription(for: meetingId, audioURL: audioURL)
+    func retryOfflineTranscription(for meetingId: String, audioURL: URL, engine: TranscriptionEngineType? = nil) {
+        runOfflineTranscription(for: meetingId, audioURL: audioURL, chosenEngine: engine)
     }
     
     /// 仅继续声纹分离（不重新转写），用于已有转写结果但分离未完成/需重做的场景
@@ -413,7 +420,7 @@ final class RecordingViewModel {
         }
     }
 
-    private func runOfflineTranscription(for meetingId: String, audioURL: URL) {
+    private func runOfflineTranscription(for meetingId: String, audioURL: URL, chosenEngine: TranscriptionEngineType? = nil) {
         transcriptionTask?.cancel()
 
         AppLog.info("Offline transcription + diarization started: meeting=\(meetingId)")
@@ -425,12 +432,17 @@ final class RecordingViewModel {
 
         // 使用实时段作为初始显示基础（保留已有的文本和声纹人标签），
         // 仅在实时段未覆盖的时间区域填充占位段
+        //
+        // 注意：来自录音流程的 transcriptSegments 标记为「realtime」，重新分析时保留
+        // 以便声纹标签恢复。但如果是从数据库加载的已完成分析结果，清空重建占位段，
+        // 避免 UI 显示旧结果导致「点击重新分析后立即完成」的错觉
         let realtimeSegs = savedRealtimeSegments.sorted { $0.startTime < $1.startTime }
         let totalDuration = Double(currentMeeting?.duration ?? 0)
+        let isRerun = (currentMeeting?.status == .completed || currentMeeting?.status == .pendingDiarization)
         let hasRealtimeSegments = !realtimeSegs.isEmpty
 
-        if hasRealtimeSegments {
-            // 实时录音场景：保留实时段 + 间隙占位段
+        if hasRealtimeSegments && !isRerun {
+            // 实时录音刚结束场景：保留实时转写段 + 间隙占位段
             let estimatedTotal = max(realtimeSegs.count, max(1, Int(ceil(totalDuration / 3.0))))
             self.offlineTotalSegments = estimatedTotal
 
@@ -485,8 +497,14 @@ final class RecordingViewModel {
             displaySegments.sort { $0.startTime < $1.startTime }
             self.transcriptSegments = displaySegments
             self.segmentCount = 0  // 重新分析时段数从 0 起步重新累加
+        } else if hasRealtimeSegments && isRerun {
+            // 重新分析场景：不在 UI 显示占位符，只设置进度标记
+            // 后台分析完成后，consumerTask 会逐步加入段；占位段会导致用户看到 0:00 的空气泡
+            self.offlineTotalSegments = 0
+            self.transcriptSegments = []
+            self.segmentCount = 0
         } else {
-            // 导入音频场景：不预建占位段，Whisper 产出逐步追加显示
+            // 导入音频场景：不预建占位段，产出逐步追加显示
             self.offlineTotalSegments = 0
             self.transcriptSegments = []
             self.segmentCount = 0
@@ -658,12 +676,35 @@ final class RecordingViewModel {
         let customHws = hotwordCats.contains("__custom__") ? SettingsManager.shared.hotwords : ""
         let finalHotwords = [industryHws, customHws, self.currentMeeting?.attendees ?? ""].filter { !$0.isEmpty }.joined(separator: " ")
 
+        let contactNames = self.databaseManager.fetchAllContacts().map(\.name)
+
         // 后台生产者
-        transcriptionTask = Task.detached { [weak self, finalHotwords] in
+        transcriptionTask = Task.detached { [weak self, meetingId, audioURL, finalHotwords, contactNames] in
             guard let self = self else { return }
             defer {
+                // 最终对齐：确保所有段都覆盖了说话人标签
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    let allSegments = self.transcriptSegments.filter { !$0.isPlaceholder }
+                    if let diar = await sharedState.getDiarSegments(), !diar.isEmpty {
+                        let aligned = SpeakerAlignmentService.align(transcripts: allSegments, diarization: diar)
+                        if let autoMap = await sharedState.getSpeakerMap(), !autoMap.isEmpty {
+                            self.transcriptSegments = aligned.map { seg in
+                                var s = seg
+                                if let match = autoMap[seg.speakerLabel] {
+                                    s.speakerLabel = match.name
+                                    s.contactId = match.contactId
+                                }
+                                return s
+                            }
+                        } else {
+                            self.transcriptSegments = aligned
+                        }
+                    }
+                    // 最终保存
+                    try? self.saveSegmentsToDatabase(meetingId: meetingId, segments: self.transcriptSegments)
+                }
                 consumerTask.cancel()
-                // 释放共享状态中的大型数据（声纹和分离结果），它们已被转录段消化
                 Task { await sharedState.setDiarization([], embeddings: [:]) }
                 Task { @MainActor [weak self] in
                     self?.isTranscribingOffline = false
@@ -675,23 +716,34 @@ final class RecordingViewModel {
             }
 
             do {
-                // 确保 FunASR 离线模型已初始化（传入热词，若热词变更会自动重建识别器）
-                if !(await FunASRService.shared.isOfflineReady) {
-                    try await FunASRService.shared.initializeOffline(hotwords: finalHotwords)
+                // 确定使用的转写引擎
+                let activeEngine = chosenEngine ?? SettingsManager.shared.transcriptionEngine
+                let cloudModelConfig = TranscriptionEngineCoordinator.shared.getActiveCloudTranscriptionModel()
+                let isCloudActive = (activeEngine == .cloudModel) && (cloudModelConfig != nil)
+
+                if isCloudActive {
+                    AppLog.info("[Analysis] Running offline analysis with Cloud Model: \(cloudModelConfig?.model.name ?? "Cloud")")
                 } else {
-                    // 即使已就绪，也传入热词以触发热词变更时的重建
-                    try await FunASRService.shared.initializeOffline(hotwords: finalHotwords)
+                    AppLog.info("[Analysis] Running offline analysis with local FunASR")
+                    // 确保 FunASR 离线模型已初始化（传入热词，若热词变更会自动重建识别器）
+                    if !(await FunASRService.shared.isOfflineReady) {
+                        try await FunASRService.shared.initializeOffline(hotwords: finalHotwords)
+                    } else {
+                        // 即使已就绪，也传入热词以触发热词变更时的重建
+                        try await FunASRService.shared.initializeOffline(hotwords: finalHotwords)
+                    }
+                    // 确保标点恢复模型已初始化
+                    if SettingsManager.shared.isFunASRPunctAvailable {
+                        let punctReady = await FunASRService.shared.isPunctReady
+                        if !punctReady {
+                            try? await FunASRService.shared.initializePunctuation()
+                        }
+                    }
                 }
+
                 // 确保 VAD 已初始化（Silero VAD）
                 if !(await FunASRService.shared.isVadReady) {
-                    try await FunASRService.shared.initializeVAD()
-                }
-                // 确保标点恢复模型已初始化
-                if SettingsManager.shared.isFunASRPunctAvailable {
-                    let punctReady = await FunASRService.shared.isPunctReady
-                    if !punctReady {
-                        try? await FunASRService.shared.initializePunctuation()
-                    }
+                    try? await FunASRService.shared.initializeVAD()
                 }
                 try Task.checkCancellation()
 
@@ -707,21 +759,119 @@ final class RecordingViewModel {
                 let (chunkStream, chunkContinuation) = AsyncStream<[DiarizedSegment]>.makeStream()
                 
                 // (热词已在主线程提前组装并通过 finalHotwords 捕获)
-                
-                let transcriptionWorker = Task.detached { [meetingId, samples, sampleRate, finalHotwords] in
+
+                let transcriptionWorker = Task.detached { [meetingId, samples, sampleRate, finalHotwords, isCloudActive, cloudModelConfig, contactNames] in
                     for await chunk in chunkStream {
-                        _ = try? await FunASRService.shared.transcribeDiarizedSegments(
-                            samples: samples,
-                            sampleRate: sampleRate,
-                            diarSegments: chunk,
-                            meetingId: meetingId,
-                            hotwords: finalHotwords,
-                            onSegment: { segment in
-                                collectedSegments.append(segment)
-                                // 实时推送到前端展示队列
-                                segmentQueue.sync { pendingChunks.append([segment]) }
+                        if isCloudActive, let (cloudModel, apiKey) = cloudModelConfig {
+                            for seg in chunk {
+                                guard !Task.isCancelled else { break }
+                                let startSample = max(0, Int(seg.startTime * Double(sampleRate)))
+                                let endSample = min(samples.count, Int(seg.endTime * Double(sampleRate)))
+                                guard startSample < endSample else { continue }
+                                let slice = Array(samples[startSample..<endSample])
+
+                                var diarizedSentences: [CloudDiarizedSentence] = []
+                                do {
+                                    diarizedSentences = try await CloudTranscriptionService.shared.transcribeAndDiarizeSamples(
+                                        samples: slice,
+                                        sampleRate: sampleRate,
+                                        contextSpeakers: contactNames,
+                                        priorSpeaker: collectedSegments.last?.speakerLabel,
+                                        model: cloudModel,
+                                        apiKey: apiKey
+                                    )
+                                } catch {
+                                    AppLog.warn("[CloudASR] Segment transcribe error: \(error.localizedDescription), falling back to FunASR")
+                                    _ = try? await FunASRService.shared.transcribeDiarizedSegments(
+                                        samples: samples,
+                                        sampleRate: sampleRate,
+                                        diarSegments: [seg],
+                                        meetingId: meetingId,
+                                        hotwords: finalHotwords,
+                                        onSegment: { s in
+                                            collectedSegments.append(s)
+                                            segmentQueue.sync { pendingChunks.append([s]) }
+                                        }
+                                    )
+                                    continue
+                                }
+
+                                if diarizedSentences.isEmpty {
+                                    // 降级尝试单段基础转写
+                                    if let fallbackText = try? await CloudTranscriptionService.shared.transcribeSamples(
+                                        samples: slice,
+                                        sampleRate: sampleRate,
+                                        hotwords: finalHotwords,
+                                        model: cloudModel,
+                                        apiKey: apiKey
+                                    ), !fallbackText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                        let ts = TranscriptSegment(
+                                            id: "\(meetingId)_diar_\(UUID().uuidString)",
+                                            startTime: seg.startTime,
+                                            endTime: seg.endTime,
+                                            text: fallbackText.trimmingCharacters(in: .whitespacesAndNewlines),
+                                            speakerLabel: seg.speakerId,
+                                            isFinal: true
+                                        )
+                                        collectedSegments.append(ts)
+                                        segmentQueue.sync { pendingChunks.append([ts]) }
+                                    }
+                                } else if diarizedSentences.count == 1 {
+                                    let item = diarizedSentences[0]
+                                    let trimmed = item.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                                    if !trimmed.isEmpty {
+                                        let spk = item.speaker.trimmingCharacters(in: .whitespacesAndNewlines)
+                                        let ts = TranscriptSegment(
+                                            id: "\(meetingId)_diar_\(UUID().uuidString)",
+                                            startTime: seg.startTime,
+                                            endTime: seg.endTime,
+                                            text: trimmed,
+                                            speakerLabel: spk.isEmpty ? seg.speakerId : spk,
+                                            isFinal: true
+                                        )
+                                        collectedSegments.append(ts)
+                                        segmentQueue.sync { pendingChunks.append([ts]) }
+                                    }
+                                } else {
+                                    // 多人抢话或轮替发言：拆分子段输出
+                                    let totalDur = max(0.1, seg.endTime - seg.startTime)
+                                    let totalChars = max(1, diarizedSentences.reduce(0) { $0 + max(1, $1.text.count) })
+                                    var currentStart = seg.startTime
+                                    for (i, item) in diarizedSentences.enumerated() {
+                                        let trimmed = item.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                                        guard !trimmed.isEmpty else { continue }
+                                        let ratio = Double(max(1, trimmed.count)) / Double(totalChars)
+                                        let dur = (i == diarizedSentences.count - 1) ? max(0.05, seg.endTime - currentStart) : (totalDur * ratio)
+                                        let nextStart = currentStart + dur
+                                        let spk = item.speaker.trimmingCharacters(in: .whitespacesAndNewlines)
+                                        let ts = TranscriptSegment(
+                                            id: "\(meetingId)_diar_\(UUID().uuidString)_\(i)",
+                                            startTime: currentStart,
+                                            endTime: nextStart,
+                                            text: trimmed,
+                                            speakerLabel: spk.isEmpty ? seg.speakerId : spk,
+                                            isFinal: true
+                                        )
+                                        collectedSegments.append(ts)
+                                        segmentQueue.sync { pendingChunks.append([ts]) }
+                                        currentStart = nextStart
+                                    }
+                                }
                             }
-                        )
+                        } else {
+                            _ = try? await FunASRService.shared.transcribeDiarizedSegments(
+                                samples: samples,
+                                sampleRate: sampleRate,
+                                diarSegments: chunk,
+                                meetingId: meetingId,
+                                hotwords: finalHotwords,
+                                onSegment: { segment in
+                                    collectedSegments.append(segment)
+                                    // 实时推送到前端展示队列
+                                    segmentQueue.sync { pendingChunks.append([segment]) }
+                                }
+                            )
+                        }
                     }
                 }
                 
@@ -1181,7 +1331,7 @@ final class RecordingViewModel {
             parentId = selectedParentMeetingId
         }
 
-        let meeting = Meeting(
+        var meeting = Meeting(
             id: meetingId,
             parentMeetingId: parentId,
             title: meetingTitle,
@@ -1194,6 +1344,7 @@ final class RecordingViewModel {
             updatedAt: formCreatedAt,
             attendees: formAttendees.isEmpty ? nil : formAttendees
         )
+        meeting.hotwordCategories = formHotwordCategories.isEmpty ? nil : formHotwordCategories.sorted().joined(separator: ",")
 
         do {
             try databaseManager.createMeeting(meeting)
@@ -1384,7 +1535,21 @@ final class RecordingViewModel {
     /// 将指定的片段持久化到数据库（使用事务确保原子性，设计为可在后台线程运行）
     func saveSegmentsToDatabase(meetingId: String, segments: [TranscriptSegment]? = nil) {
         let segmentsToSave = segments ?? self.transcriptSegments
-        
+
+        // 单段增量更新：使用 updateSpeechClipContact 代替全量删写
+        if let seg = segments, seg.count == 1, let single = seg.first {
+            do {
+                try databaseManager.updateSpeechClipContact(
+                    clipId: single.id,
+                    speakerLabel: single.speakerLabel,
+                    contactId: single.contactId
+                )
+            } catch {
+                AppLog.error("[Save] Incremental update failed for clip \(single.id): \(error.localizedDescription)")
+            }
+            return
+        }
+
         Task { @MainActor in
             guard self.databaseManager.meetingExists(id: meetingId) else {
                 AppLog.info("saveSegmentsToDatabase: meeting \(meetingId) no longer exists, skipping")
@@ -1554,6 +1719,20 @@ final class RecordingViewModel {
         return Array(speakers).sorted()
     }
 
+    /// 录制期间获取参会人列表（从 currentMeeting 解析或转录段收集）
+    var recordingAttendees: [String] {
+        if let attendees = currentMeeting?.attendees, !attendees.isEmpty {
+            return attendees.components(separatedBy: " ").filter { !$0.isEmpty }
+        }
+        var names = Set<String>()
+        for chunk in audioChunks {
+            if let label = chunk.speakerLabel, label != "?", !label.isEmpty {
+                names.insert(label)
+            }
+        }
+        return names.sorted()
+    }
+
     /// 全局重命名说话人（并同步更新所有相关片段）
     func globalRenameSpeaker(oldName: String, newName: String, contactId: String? = nil) {
         guard oldName != newName else { return }
@@ -1580,6 +1759,18 @@ final class RecordingViewModel {
                 if let id = cid {
                     transcriptSegments[i].contactId = id
                 }
+            }
+        }
+
+        // 同步更新录音期间的 audioChunks（录制中 transcriptSegments 为空，需独立处理）
+        if !audioChunks.isEmpty {
+            if let idx = audioChunks.firstIndex(where: { $0.speakerLabel == oldName }) {
+                // 有匹配项：双向同步批量重命名
+                for i in 0..<audioChunks.count where audioChunks[i].speakerLabel == oldName {
+                    audioChunks[i].speakerLabel = newName
+                    audioChunks[i].isManualEdit = true
+                }
+                audioRecorder.batchRenameChunkSpeaker(oldName: oldName, newName: newName)
             }
         }
 
@@ -1875,6 +2066,15 @@ final class RecordingViewModel {
         audioRecorder.updateChunkText(chunkId: chunkId, newText: newText)
     }
 
+    /// 实时更新 AudioChunk 的发言人标签（用户手动分配）
+    func updateChunkSpeaker(chunkId: String, newSpeaker: String) {
+        if let idx = audioChunks.firstIndex(where: { $0.id == chunkId }) {
+            audioChunks[idx].speakerLabel = newSpeaker
+        }
+        // 同步到 AudioRecorder 内部状态，防止 1s 定时器覆盖
+        audioRecorder.updateChunkSpeaker(chunkId: chunkId, newSpeaker: newSpeaker)
+    }
+
     private func resetForm() {
         formTitle = ""
         formLocation = ""
@@ -1885,6 +2085,7 @@ final class RecordingViewModel {
         recordingMode = .liveRecording
         formSpeechLang = UserDefaults.standard.string(forKey: "speech_language") ?? "zh"
         formHotwordCategories = []
+        formTranscriptionEngine = SettingsManager.shared.transcriptionEngine
     }
 }
 

@@ -1,0 +1,98 @@
+[
+  {
+    "id": "openrouter-auto",
+    "name": "OpenRouter 聚合网关 (Auto / 多模型)",
+    "provider": "OpenRouter",
+    "apiURL": "https://openrouter.ai/api/v1/chat/completions",
+    "modelName": "openrouter/auto",
+    "supportsAudio": true,
+    "audioEndpointType": "chat_audio"
+  },
+  {
+    "id": "openrouter-gemini",
+    "name": "OpenRouter (Gemini 2.5/3.5 Flash)",
+    "provider": "OpenRouter",
+    "apiURL": "https://openrouter.ai/api/v1/chat/completions",
+    "modelName": "google/gemini-2.5-flash",
+    "supportsAudio": true,
+    "audioEndpointType": "chat_audio"
+  },
+  {
+    "id": "mai-transcribe-2",
+    "name": "微软 MAI-Transcribe-2 (Azure AI)",
+    "provider": "Microsoft",
+    "apiURL": "https://models.inference.ai.azure.com/chat/completions",
+    "modelName": "MAI-Transcribe-2",
+    "supportsAudio": true,
+    "audioEndpointType": "chat_audio"
+  },
+  {
+    "id": "gemini-transcribe",
+    "name": "Google Gemini 3.5 Transcribe",
+    "provider": "Google",
+    "apiURL": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+    "modelName": "gemini-2.5-flash",
+    "supportsAudio": true,
+    "audioEndpointType": "chat_audio"
+  },
+  {
+    "id": "qwen-audio",
+    "name": "阿里 Qwen-Audio (通义千问音频大模型)",
+    "provider": "Aliyun",
+    "apiURL": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+    "modelName": "qwen-audio-chat",
+    "supportsAudio": true,
+    "audioEndpointType": "chat_audio"
+  },
+  {
+    "id": "deepseek-chat",
+    "name": "DeepSeek V3 (Chat)",
+    "provider": "DeepSeek",
+    "apiURL": "https://api.deepseek.com/chat/completions",
+    "modelName": "deepseek-chat",
+    "supportsAudio": false
+  },
+  {
+    "id": "qwen-plus",
+    "name": "通义千问 Plus (Qwen-Plus)",
+    "provider": "Aliyun",
+    "apiURL": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+    "modelName": "qwen-plus",
+    "supportsAudio": false
+  },
+  {
+    "id": "glm-4",
+    "name": "智谱 GLM-4 (Zhipu AI)",
+    "provider": "Zhipu",
+    "apiURL": "https://open.bigmodel.cn/api/paas/v4/chat/completions",
+    "modelName": "glm-4",
+    "supportsAudio": false
+  },
+  {
+    "id": "moonshot-v1-8k",
+    "name": "月之暗面 Kimi (Moonshot)",
+    "provider": "Moonshot",
+    "apiURL": "https://api.moonshot.cn/v1/chat/completions",
+    "modelName": "moonshot-v1-8k",
+    "supportsAudio": false
+  },
+  {
+    "id": "gpt-4o",
+    "name": "OpenAI GPT-4o",
+    "provider": "OpenAI",
+    "apiURL": "https://api.openai.com/v1/chat/completions",
+    "modelName": "gpt-4o",
+    "supportsAudio": true,
+    "audioEndpointType": "chat_audio"
+  },
+  {
+    "id": "custom",
+    "name": "自定义兼容模型 (Custom)",
+    "provider": "Custom",
+    "apiURL": "https://api.openai.com/v1/chat/completions",
+    "modelName": "custom-model",
+    "isCustom": true,
+    "supportsAudio": true,
+    "audioEndpointType": "chat_audio"
+  }
+]

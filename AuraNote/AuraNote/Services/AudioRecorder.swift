@@ -20,8 +20,10 @@ final class AudioRecorder {
     var onSpeakerMatched: ((_ contactId: String, _ contactName: String) -> Void)?
     /// 增量聚类发现新匿名说话人回调（实时添加为参会人）
     var onNewSpeakerDiscovered: ((String) -> Void)?
-    /// 声纹标签更新回调：通知 UI 立即同步 audioChunks，避免等 1s 定时器
+    /// 段声纹分离完成回调
     var onVoiceprintLabelsUpdated: (() -> Void)?
+    /// 语音转写引擎（本地 FunASR 或云端大模型）
+    var transcriptionEngine: TranscriptionEngineType = .localFunASR
 
     // MARK: - 私有属性
 
@@ -43,10 +45,14 @@ final class AudioRecorder {
     private var incrementalClustering = IncrementalSpeakerClustering()  // 增量声纹聚类（同会议未知说话人自动关联）
 
     // FunASR 伪流式转写
-    private var funasrAccumulatedText: String = ""  // 当前 VAD 片段期间累积的转写文本
+    private var funasrAccumulatedText: String = ""  // 当前段累积文本
     private var funasrDecodeTimer: Timer?            // 伪流式推理轮询定时器
     private var funasrStreamCreated = false           // 伪流式缓冲区是否已创建
-    private var isInferring = false                   // 推理防重入锁：避免上一次离线推理未完成时又发起新一次
+    private var isInferring = false                   // 推理防重入锁
+    private var lastSpeechSampleIndex: Int = 0        // VAD 最后语音位置
+    private var silenceSampleCount: Int = 0            // VAD 连续静音采样计数
+    private var lastPauseSampleIndex: Int = 0          // 最近一次语音->静音切换位置
+    private var lastChunkEndTime: TimeInterval = 0     // 上个产出段的结束时间
 
     // 30 秒连续 VAD 攒批声纹提取队列
     private var pendingVoiceprintChunks: [AudioChunk] = []
@@ -89,9 +95,16 @@ final class AudioRecorder {
         return true
     }
 
-    // MARK: - 开始录音
-
-    func startRecording(meetingId: String, savePath: URL, hotwords: String = "") throws {
+    func startRecording(meetingId: String, savePath: URL, hotwords: String = "", engine: TranscriptionEngineType? = nil) throws {
+        self.transcriptionEngine = engine ?? SettingsManager.shared.transcriptionEngine
+        AppLog.info("[AudioRecorder] Starting recording with engine=\(self.transcriptionEngine.rawValue)")
+        if self.transcriptionEngine == .cloudModel {
+            if let (cloudModel, _) = TranscriptionEngineCoordinator.shared.getActiveCloudTranscriptionModel() {
+                AppLog.info("[AudioRecorder] Active cloud model: \(cloudModel.name) (\(cloudModel.modelName))")
+            } else {
+                AppLog.warn("[AudioRecorder] Cloud engine selected, but no audio model with API-KEY found in Keychain!")
+            }
+        }
         // 重置状态
         audioChunks = []
         errorMessage = nil
@@ -99,6 +112,10 @@ final class AudioRecorder {
         currentChunkStartTime = nil
         chunkCounter = 0
         isListening = false
+        lastSpeechSampleIndex = 0
+        silenceSampleCount = 0
+        lastPauseSampleIndex = 0
+        lastChunkEndTime = 0
         currentMeetingId = meetingId
         pauseTimer?.invalidate()
         pauseTimer = nil
@@ -137,6 +154,7 @@ final class AudioRecorder {
             
             // VAD 用原始振幅判停，避免增益抬升底噪导致误判为持续说话
             let rawAmplitude = self.computeAmplitude(buffer: buffer)
+            let rawFloatArray = AudioProcessor.convertBufferToArray(buffer: buffer)  // 原始振幅，VAD 用
             
             // 针对语音做自适应增强：有说话时强力增益，静音时不放大噪声
             let gainedBuffer = self.applySpeechEnhancement(to: buffer)
@@ -174,44 +192,45 @@ final class AudioRecorder {
                 guard let self = self else { return }
                 // 可视化用原始振幅（EMA 平滑）
                 self.currentAmplitude = self.currentAmplitude * 0.7 + rawAmplitude * 0.3
-                // VAD 用未平滑的原始振幅，即时响应停顿，避免长句不切分
-                self.appendAudioAndSegment(floatArray, rawAmplitude: rawAmplitude)
+                // VAD 用原始振幅，语音识别用增益后音频
+                self.appendAudioAndSegment(floatArray, rawAudio: rawFloatArray)
             }
         }
 
         audioEngine.prepare()
         try audioEngine.start()
 
-        // 初始化 FunASR 流式 Paraformer 并创建在线流
-        Task { [weak self] in
-            guard let self = self else { return }
-            do {
-                try await FunASRService.shared.initializeOnline(hotwords: hotwords)
-                try await FunASRService.shared.createOnlineStream()
-                await MainActor.run {
-                    self.funasrStreamCreated = true
-                    AppLog.info("[AudioRecorder] FunASR online stream created")
-                }
-            } catch {
-                AppLog.error("[AudioRecorder] FunASR online init failed: \(error)")
-            }
-        }
-
-        // 伪流式推理轮询定时器：频率跟随 liveTranscribeInterval（默认 1.5s）
-        // 注意：离线推理每次约 200~500ms，0.2s 轮询会产生大量并发任务堆积
-        funasrDecodeTimer?.invalidate()
-        let decodeInterval = Double(SettingsManager.shared.liveTranscribeInterval)
-        funasrDecodeTimer = Timer.scheduledTimer(withTimeInterval: decodeInterval, repeats: true) { [weak self] _ in
-            guard let self = self, self.funasrStreamCreated, !self.isInferring else { return }
-            self.isInferring = true
+        // 仅在本地 FunASR 模式下初始化 FunASR 流式 Paraformer 并创建在线流与解码轮询
+        if self.transcriptionEngine == .localFunASR {
             Task { [weak self] in
                 guard let self = self else { return }
-                if let incremental = await FunASRService.shared.decodeStreamIncremental(), !incremental.isEmpty {
+                do {
+                    try await FunASRService.shared.initializeOnline(hotwords: hotwords)
+                    try await FunASRService.shared.createOnlineStream()
                     await MainActor.run {
-                        self.funasrAccumulatedText += incremental
+                        self.funasrStreamCreated = true
+                        AppLog.info("[AudioRecorder] FunASR online stream created")
                     }
+                } catch {
+                    AppLog.error("[AudioRecorder] FunASR online init failed: \(error)")
                 }
-                await MainActor.run { self.isInferring = false }
+            }
+
+            // 伪流式推理轮询定时器：频率跟随 liveTranscribeInterval（默认 1.5s）
+            funasrDecodeTimer?.invalidate()
+            let decodeInterval = Double(SettingsManager.shared.liveTranscribeInterval)
+            funasrDecodeTimer = Timer.scheduledTimer(withTimeInterval: decodeInterval, repeats: true) { [weak self] _ in
+                guard let self = self, self.funasrStreamCreated, !self.isInferring else { return }
+                self.isInferring = true
+                Task { [weak self] in
+                    guard let self = self else { return }
+                    if let incremental = await FunASRService.shared.decodeStreamIncremental(), !incremental.isEmpty {
+                        await MainActor.run {
+                            self.funasrAccumulatedText += incremental
+                        }
+                    }
+                    await MainActor.run { self.isInferring = false }
+                }
             }
         }
 
@@ -221,30 +240,44 @@ final class AudioRecorder {
 
     // MARK: - 停止录音
 
-    func stopRecording() -> Int {
+    /// 仅停止音频引擎（在后台线程调用），不碰任何 @Observable 状态，避免数据竞争
+    func stopRecordingEngine() -> Int {
         audioEngine.inputNode.removeTap(onBus: 0)
         audioEngine.stop()
-
         audioFile = nil
         audioConverter = nil
-        
+        #if os(iOS)
+        try? AVAudioSession.sharedInstance().setActive(false)
+        #endif
+        let duration: Int
+        if let start = recordingStartTime {
+            duration = Int(Date().timeIntervalSince(start))
+        } else {
+            duration = 0
+        }
+        return duration
+    }
+
+    /// 录音引擎停止后的状态清理（主线程调用）
+    func finalizeRecording() {
         // 切割最后一个未完成的片段
         if !currentChunkBuffer.isEmpty {
-            cutCurrentChunk()
+            if currentChunkStartTime == nil {
+                currentChunkBuffer = []
+            } else {
+                cutCurrentChunk()
+            }
         }
         
         pauseTimer?.invalidate()
         pauseTimer = nil
 
-        // 停止 FunASR 流式解码
         funasrDecodeTimer?.invalidate()
         funasrDecodeTimer = nil
 
-        // 刷新伪流式识别的最后文本（inputFinished 内部触发最终推理，无需循环追加）
         if funasrStreamCreated {
             Task { [weak self] in
                 guard let self = self else { return }
-                // inputFinished() 内部调用一次 decodeStreamIncremental()，确保尾帧不丢失
                 await FunASRService.shared.inputFinished()
                 await FunASRService.shared.resetOnlineStream()
                 await MainActor.run {
@@ -253,17 +286,9 @@ final class AudioRecorder {
             }
         }
 
-        let duration: Int
-        if let start = recordingStartTime {
-            duration = Int(Date().timeIntervalSince(start))
-        } else {
-            duration = 0
-        }
-
         isRecording = false
         currentAmplitude = 0
 
-        // 刷出剩余末尾未满 30 秒的声纹批次
         var finalBatch: [AudioChunk]?
         var finalDuration: Double = 0.0
         voiceprintBatchLock.withLock {
@@ -284,52 +309,75 @@ final class AudioRecorder {
                 let _ = await self?.incrementalClustering.mergeSimilarClusters(threshold: SettingsManager.shared.clusterMergeDistance)
             }
         }
-
-        #if os(iOS)
-        try? AVAudioSession.sharedInstance().setActive(false)
-        #endif
-
-        return duration
     }
 
     // MARK: - 内部方法
 
     // MARK: - 音频分割（VAD 纯分割器，不参与录制决策）
 
-    /// 始终追加音频到当前片段 buffer，VAD 仅用于判断何时切割
-    /// - Parameter rawAmplitude: 原始振幅（未经 EMA 平滑），用于即时停顿检测
-    private func appendAudioAndSegment(_ audio: [Float], rawAmplitude: Float) {
-        DispatchQueue.main.async {
-            self.currentChunkBuffer.append(contentsOf: audio)
-            
-            let settings = SettingsManager.shared
-            if rawAmplitude > settings.silenceThreshold {
-                // 有语音活动：记录片段起始时间，重置静默计时器
-                let now = Date()
-                if self.currentChunkStartTime == nil {
-                    self.currentChunkStartTime = now
-                }
-                self.isListening = true
-                self.pauseTimer?.invalidate()
-                self.pauseTimer = Timer.scheduledTimer(withTimeInterval: settings.pauseWindow, repeats: false) { [weak self] _ in
-                    self?.cutCurrentChunk()
-                }
-                
-                // 超过最大时长强制切分（防止连续说话导致单段过长）
-                let chunkDuration = Double(self.currentChunkBuffer.count) / 16000.0
-                if chunkDuration >= settings.maxChunkDuration {
-                    self.cutCurrentChunk()
-                }
-            } else {
-                // 静默：不做任何事，等待 pauseTimer 触发切割
-                // 如果从未有过语音活动（pauseTimer 从未创建），丢弃过长的纯静音
-                if self.pauseTimer == nil && self.currentChunkStartTime == nil {
-                    let maxSilentSamples = 16000 * 2
-                    let keepSamples = 8000
-                    if self.currentChunkBuffer.count > maxSilentSamples {
-                        self.currentChunkBuffer = Array(self.currentChunkBuffer.suffix(keepSamples))
+    /// 始终追加音频到当前片段 buffer，使用 50ms 帧 + 采样计数做 VAD 切段
+    /// - Parameter audio: 增益后的语音（写入 chunk buffer + 喂 FunASR）
+    /// - Parameter rawAudio: 原始振幅音频（VAD 停顿检测用，不受增益干扰）
+    private func appendAudioAndSegment(_ audio: [Float], rawAudio: [Float]) {
+        let settings = SettingsManager.shared
+        let frameSize = 800  // 50ms @ 16kHz
+        let silenceThreshold = settings.silenceThreshold
+        let pauseWindowSamples = Int(settings.pauseWindow * 16000)
+        let maxChunkSamples = Int(settings.maxChunkDuration * 16000)
+
+        let completeAudio = audio
+        let completeRaw = rawAudio
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            var frameStart = 0
+            while frameStart < completeAudio.count {
+                let frameEnd = min(frameStart + frameSize, completeAudio.count)
+                var rawSum: Float = 0
+                for i in frameStart..<frameEnd { rawSum += abs(completeRaw[i]) }
+                let frameAmp = rawSum / Float(frameEnd - frameStart)
+                let capturedFrameSize = frameEnd - frameStart
+
+                self.currentChunkBuffer.append(contentsOf: completeAudio[frameStart..<frameEnd])
+
+                if frameAmp > silenceThreshold {
+                    if self.currentChunkStartTime == nil {
+                        self.currentChunkStartTime = Date()
+                    }
+                    self.isListening = true
+                    self.lastSpeechSampleIndex = self.currentChunkBuffer.count
+                    self.silenceSampleCount = 0
+
+                    if self.currentChunkBuffer.count >= maxChunkSamples {
+                        // 向前找最近静音间隙（最多回退 5s），避免硬切在词语中间
+                        let lookbackSamples = 5 * 16000
+                        if self.lastPauseSampleIndex > 0 && self.currentChunkBuffer.count - self.lastPauseSampleIndex < lookbackSamples {
+                            let overflow = Array(self.currentChunkBuffer.suffix(self.currentChunkBuffer.count - self.lastPauseSampleIndex))
+                            self.currentChunkBuffer = Array(self.currentChunkBuffer.prefix(self.lastPauseSampleIndex))
+                            self.cutCurrentChunk()
+                            self.currentChunkBuffer.append(contentsOf: overflow)
+                            self.currentChunkStartTime = Date()  // 续接段
+                        } else {
+                            self.cutCurrentChunk()
+                        }
+                    }
+                } else {
+                    if self.currentChunkStartTime != nil {
+                        if self.silenceSampleCount == 0 {
+                            self.lastPauseSampleIndex = self.currentChunkBuffer.count  // 记录语音→静音边界
+                        }
+                        self.silenceSampleCount += capturedFrameSize
+                        if self.silenceSampleCount >= pauseWindowSamples {
+                            self.cutCurrentChunk()
+                        }
+                    } else {
+                        let maxSilent = 16000 * 3
+                        if self.currentChunkBuffer.count > maxSilent {
+                            self.currentChunkBuffer = Array(self.currentChunkBuffer.suffix(8000))
+                        }
                     }
                 }
+
+                frameStart = frameEnd
             }
         }
     }
@@ -401,29 +449,146 @@ final class AudioRecorder {
         // 使用 FunASR 流式累积文本
         let funasrText = funasrAccumulatedText.trimmingCharacters(in: .whitespaces)
         let capturedChunk = chunk
-
-        // FunASR 流式：直接使用当前累积的转写文本
         var updatedChunk = capturedChunk
         let rawText = funasrText.isEmpty ? "" : funasrText
-        // 异步添加标点恢复（Paraformer 无内置标点）
-        Task { [weak self, capturedChunk, rawText] in
-            let punctuated = await FunASRService.shared.addPunctuation(rawText)
-            await MainActor.run { [weak self] in
-                if let idx = self?.audioChunks.firstIndex(where: { $0.id == capturedChunk.id }) {
-                    self?.audioChunks[idx].text = punctuated.isEmpty ? rawText : punctuated
+
+        if transcriptionEngine == .cloudModel,
+           let (cloudModel, apiKey) = TranscriptionEngineCoordinator.shared.getActiveCloudTranscriptionModel() {
+            // 云端大模型转写模式：先以 isTranscribing = true 加入列表
+            updatedChunk.text = rawText
+            updatedChunk.isTranscribing = true
+            audioChunks.append(updatedChunk)
+
+            let samplesToTranscribe = effectiveSamples
+            Task { [weak self, capturedChunk, samplesToTranscribe, cloudModel, apiKey, rawText] in
+                do {
+                    // 获取已知参会人名单与上一句活跃说话人
+                    let contacts = await self?.contactsProvider?() ?? []
+                    let knownNames = contacts.map(\.name)
+                    let priorSpeaker = await MainActor.run { () -> String? in
+                        guard let self = self else { return nil }
+                        return self.audioChunks.last(where: { $0.id != capturedChunk.id && !($0.speakerLabel?.isEmpty ?? true) })?.speakerLabel
+                    }
+
+                    let diarizedSentences = try await CloudTranscriptionService.shared.transcribeAndDiarizeSamples(
+                        samples: samplesToTranscribe,
+                        sampleRate: 16000,
+                        contextSpeakers: knownNames,
+                        priorSpeaker: priorSpeaker,
+                        model: cloudModel,
+                        apiKey: apiKey
+                    )
+
+                    await MainActor.run { [weak self] in
+                        guard let self = self else { return }
+                        guard let idx = self.audioChunks.firstIndex(where: { $0.id == capturedChunk.id }) else { return }
+
+                        if diarizedSentences.isEmpty {
+                            let finalText = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
+                            self.audioChunks[idx].text = finalText
+                            self.audioChunks[idx].isTranscribing = false
+                            return
+                        }
+
+                        if diarizedSentences.count == 1 {
+                            let sentence = diarizedSentences[0]
+                            let finalText = sentence.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                            self.audioChunks[idx].text = finalText.isEmpty ? rawText : finalText
+                            let speaker = sentence.speaker.trimmingCharacters(in: .whitespacesAndNewlines)
+                            if !speaker.isEmpty {
+                                self.audioChunks[idx].speakerLabel = speaker
+                                if let matched = contacts.first(where: { $0.name == speaker }) {
+                                    self.onSpeakerMatched?(matched.id, matched.name)
+                                } else if !self.discoveredSpeakerLabels.contains(speaker) {
+                                    self.discoveredSpeakerLabels.insert(speaker)
+                                    self.onNewSpeakerDiscovered?(speaker)
+                                }
+                            }
+                            self.audioChunks[idx].isTranscribing = false
+                        } else {
+                            // 检测到抢话/多人快速轮替：拆分为多个独立 AudioChunk 行呈现
+                            let baseChunk = self.audioChunks[idx]
+                            self.audioChunks.remove(at: idx)
+
+                            let totalDur = max(0.1, baseChunk.endTime - baseChunk.startTime)
+                            let totalChars = max(1, diarizedSentences.reduce(0) { $0 + max(1, $1.text.count) })
+                            var currentStart = baseChunk.startTime
+
+                            for (i, sentence) in diarizedSentences.enumerated() {
+                                let ratio = Double(max(1, sentence.text.count)) / Double(totalChars)
+                                let dur = (i == diarizedSentences.count - 1) ? max(0.05, baseChunk.endTime - currentStart) : (totalDur * ratio)
+                                let nextStart = currentStart + dur
+
+                                let speaker = sentence.speaker.trimmingCharacters(in: .whitespacesAndNewlines)
+                                let subChunk = AudioChunk(
+                                    id: "\(baseChunk.id)_\(i)",
+                                    meetingId: baseChunk.meetingId,
+                                    startTime: currentStart,
+                                    endTime: nextStart,
+                                    audioSamples: [],
+                                    text: sentence.text.trimmingCharacters(in: .whitespacesAndNewlines),
+                                    isTranscribing: false,
+                                    speakerLabel: speaker.isEmpty ? nil : speaker
+                                )
+                                self.audioChunks.append(subChunk)
+
+                                if !speaker.isEmpty {
+                                    if let matched = contacts.first(where: { $0.name == speaker }) {
+                                        self.onSpeakerMatched?(matched.id, matched.name)
+                                    } else if !self.discoveredSpeakerLabels.contains(speaker) {
+                                        self.discoveredSpeakerLabels.insert(speaker)
+                                        self.onNewSpeakerDiscovered?(speaker)
+                                    }
+                                }
+
+                                currentStart = nextStart
+                            }
+                            self.audioChunks.sort { $0.startTime < $1.startTime }
+                        }
+                        self.mergeConsecutiveSameSpeakerChunks()
+                        self.onVoiceprintLabelsUpdated?()
+                    }
+                } catch {
+                    AppLog.warn("[LiveCloudASR] Cloud transcription failed: \(error.localizedDescription), falling back to local text")
+                    let punctuated = await FunASRService.shared.addPunctuation(rawText)
+                    await MainActor.run { [weak self] in
+                        guard let self else { return }
+                        if let idx = self.audioChunks.firstIndex(where: { $0.id == capturedChunk.id }) {
+                            self.audioChunks[idx].text = punctuated.isEmpty ? rawText : punctuated
+                            self.audioChunks[idx].isTranscribing = false
+                        }
+                    }
+                }
+            }
+        } else {
+            if transcriptionEngine == .cloudModel {
+                AppLog.warn("[LiveCloudASR] Cloud model requested, but no audio model with API-KEY is ready. Falling back to local FunASR.")
+            }
+            // 本地 FunASR 模式：直接使用当前累积文本并异步添加标点
+            updatedChunk.text = rawText
+            updatedChunk.isTranscribing = false
+            audioChunks.append(updatedChunk)
+
+            Task { [weak self, capturedChunk, rawText] in
+                let punctuated = await FunASRService.shared.addPunctuation(rawText)
+                await MainActor.run { [weak self] in
+                    if let idx = self?.audioChunks.firstIndex(where: { $0.id == capturedChunk.id }) {
+                        self?.audioChunks[idx].text = punctuated.isEmpty ? rawText : punctuated
+                    }
                 }
             }
         }
-        updatedChunk.text = rawText
-        updatedChunk.isTranscribing = false
-        audioChunks.append(updatedChunk)
         funasrAccumulatedText = ""  // 重置累积文本，准备下一段
-        // 清空伪流式缓冲区：让下一个 VAD 段从空缓冲区重新开始，
-        // 避免离线 Paraformer 对旧音频重复推理导致文本重复
-        Task { await FunASRService.shared.resetOnlineStream() }
+        // 加锁清空伪流式缓冲区，防止 timer 在清空前触发推理导致跨段文本合并
+        isInferring = true
+        Task { [weak self] in
+            guard let self else { return }
+            await FunASRService.shared.resetOnlineStream()
+            await MainActor.run { self.isInferring = false }
+        }
 
-        // 异步投递声纹提取
-        if !funasrText.isEmpty {
+        // 异步投递声纹提取（仅在本地引擎模式下使用本地 ERes2Net 批量提取）
+        if transcriptionEngine == .localFunASR, !funasrText.isEmpty {
             Task { [weak self] in
                 self?.enqueueChunkForVoiceprintBatch(updatedChunk)
             }
@@ -432,6 +597,10 @@ final class AudioRecorder {
         // 重置当前片段状态
         currentChunkBuffer = []
         currentChunkStartTime = nil
+        lastSpeechSampleIndex = 0
+        silenceSampleCount = 0
+        lastPauseSampleIndex = 0
+        lastChunkEndTime = max(lastChunkEndTime, currentChunkBuffer.isEmpty ? 0 : 0)
         isListening = false
     }
 
@@ -499,17 +668,26 @@ final class AudioRecorder {
         var labeledSubSegments: [(start: Double, end: Double, label: String, embedding: [Float])] = []
         
         for sub in hybridSegments {
+            let subDuration = sub.end - sub.start
             var assignedLabel: String
-            if !contacts.isEmpty, let match = DiarizationService.matchSingleEmbedding(
+
+            // 短片段（<1.0s）：声纹置信度稍低，跳过联系人匹配，由增量聚类根据声纹或发言连续性平滑继承
+            let shortSegment = subDuration < 1.0
+
+            if !shortSegment, !contacts.isEmpty, let match = DiarizationService.matchSingleEmbedding(
                 sub.embedding, against: contacts,
                 threshold: SettingsManager.shared.liveMatchingThreshold
             ) {
                 assignedLabel = match.contactName
                 matchedContacts[match.contactId] = match.contactName
             } else {
-                let duration = sub.end - sub.start
-                assignedLabel = await incrementalClustering.addEmbedding(sub.embedding, duration: duration)
-                // 新发现的匿名说话人实时添加为参会人
+                assignedLabel = await incrementalClustering.addEmbedding(
+                    sub.embedding,
+                    duration: subDuration,
+                    startTime: sub.start,
+                    endTime: sub.end
+                )
+                // 新发现的匿名说话人实时添加为参会人（短段返回 "?" 时不添加）
                 if assignedLabel.hasPrefix("Speaker_"), !discoveredSpeakerLabels.contains(assignedLabel) {
                     discoveredSpeakerLabels.insert(assignedLabel)
                     onNewSpeakerDiscovered?(assignedLabel)
@@ -608,7 +786,8 @@ final class AudioRecorder {
             AppLog.info("Voiceprint matching: contacts list empty (no contacts with stored voiceprints)")
             return
         }
-        AppLog.info("Voiceprint matching: \(contacts.count) candidates, chunk duration \(String(format: "%.1f", chunk.endTime - chunk.startTime))s")
+        let chunkDuration = chunk.endTime - chunk.startTime
+        AppLog.info("Voiceprint matching: \(contacts.count) candidates, chunk duration \(String(format: "%.1f", chunkDuration))s")
 
         guard let embedding = await DiarizationService.shared.extractEmbedding(from: chunk.audioSamples) else {
             AppLog.info("Voiceprint matching: embedding extraction failed")
@@ -621,12 +800,26 @@ final class AudioRecorder {
             self.audioChunks[idx].embedding = embedding
         }
 
-        guard let match = DiarizationService.matchSingleEmbedding(
-            embedding, against: contacts,
-            threshold: SettingsManager.shared.liveMatchingThreshold
-        ) else {
-            // 未匹配已知联系人 → 增量聚类自动关联同会议未知说话人
-            let label = await incrementalClustering.addEmbedding(embedding)
+        // 短片段（<1.6s）：声纹不可靠，跳过联系人匹配，仅尝试增量聚类继承已有标签
+        // eres2net 在 <1.6s 时依赖上下文填充，嵌入中混合了相邻说话人音频
+        let shortSegment = chunkDuration < 1.6
+
+        if !shortSegment,
+           let match = DiarizationService.matchSingleEmbedding(
+               embedding, against: contacts,
+               threshold: SettingsManager.shared.liveMatchingThreshold
+           ) {
+            await MainActor.run {
+                guard let idx = self.audioChunks.firstIndex(where: { $0.id == chunk.id }) else { return }
+                self.audioChunks[idx].speakerLabel = match.contactName
+                self.mergeConsecutiveSameSpeakerChunks()
+                onVoiceprintLabelsUpdated?()
+            }
+            AppLog.info("Voiceprint matched: \(match.contactName) (score=\(String(format: "%.3f", match.score)))")
+            onSpeakerMatched?(match.contactId, match.contactName)
+        } else {
+            // 未匹配已知联系人（或短片段跳过匹配）→ 增量聚类自动关联同会议未知说话人
+            let label = await incrementalClustering.addEmbedding(embedding, duration: chunkDuration)
             AppLog.info("Voiceprint clustering: assigned \(label) (threshold=\(SettingsManager.shared.liveMatchingThreshold))")
             await MainActor.run {
                 guard let idx = self.audioChunks.firstIndex(where: { $0.id == chunk.id }) else { return }
@@ -634,19 +827,7 @@ final class AudioRecorder {
                 self.mergeConsecutiveSameSpeakerChunks()
                 onVoiceprintLabelsUpdated?()
             }
-            return
         }
-
-        await MainActor.run {
-            guard let idx = self.audioChunks.firstIndex(where: { $0.id == chunk.id }) else { return }
-            self.audioChunks[idx].speakerLabel = match.contactName
-            self.mergeConsecutiveSameSpeakerChunks()
-            onVoiceprintLabelsUpdated?()
-        }
-        AppLog.info("Voiceprint matched: \(match.contactName) (score=\(String(format: "%.3f", match.score)))")
-        
-        // 自动将匹配到的联系人添加为会议参会人
-        onSpeakerMatched?(match.contactId, match.contactName)
     }
 
     /// 在给已完成语音片段打上发言人标签后，自动合并相邻的同发言人片段，避免界面过于碎片化
@@ -661,8 +842,8 @@ final class AudioRecorder {
                last.speakerLabel != nil,
                !last.isTranscribing, !chunk.isTranscribing {
                 
-                // 如果是同一个说话人，且相隔不超过 3.0 秒，则进行合并
-                if chunk.startTime - last.endTime < 3.0 {
+                // 如果是同一个说话人，且相隔不超过 0 秒，则进行合并（已禁用自动合并）
+                if chunk.startTime - last.endTime < 0 {
                     last.endTime = chunk.endTime
                     last.audioSamples.append(contentsOf: chunk.audioSamples)
                     if let t1 = last.text, let t2 = chunk.text {
@@ -750,6 +931,24 @@ final class AudioRecorder {
         if let idx = audioChunks.firstIndex(where: { $0.id == chunkId }) {
             audioChunks[idx].text = newText
             audioChunks[idx].isManualEdit = true
+        }
+    }
+
+    /// 更新指定 AudioChunk 的发言人标签（用户手动分配）
+    func updateChunkSpeaker(chunkId: String, newSpeaker: String) {
+        if let idx = audioChunks.firstIndex(where: { $0.id == chunkId }) {
+            audioChunks[idx].speakerLabel = newSpeaker
+            audioChunks[idx].isManualEdit = true
+        }
+    }
+
+    /// 批量重命名所有 AudioChunk 中匹配 oldName 的发言人标签
+    func batchRenameChunkSpeaker(oldName: String, newName: String) {
+        for i in 0..<audioChunks.count {
+            if audioChunks[i].speakerLabel == oldName {
+                audioChunks[i].speakerLabel = newName
+                audioChunks[i].isManualEdit = true
+            }
         }
     }
 }

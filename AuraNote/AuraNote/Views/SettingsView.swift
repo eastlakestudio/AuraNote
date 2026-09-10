@@ -12,10 +12,10 @@ let zhLocale: [String: String] = [
     "china_mirror": "HF-Mirror", "huggingface": "HuggingFace",
     "about_desc": "本地离线会议纪要系统  |  FunASR + sherpa-onnx",
     "about_copyright": "© 2026 Eastlake Studio. 保留所有权利。",
-    "about_feature_desc": "声纪是一款完全本地离线运行的智能会议纪要系统。\n基于 FunASR 语音识别引擎与 sherpa-onnx 声纹分离技术，\n支持实时录音转写、离线高精度转写、多说话人声纹分离与匹配。\n所有音频数据均在本地处理，无需联网，保障隐私安全。",
+    "about_feature_desc": "听纪是一款完全本地离线运行的智能会议纪要系统。\n基于 FunASR 语音识别引擎与 sherpa-onnx 声纹分离技术，\n支持实时录音转写、离线高精度转写、多说话人声纹分离与匹配。\n所有音频数据均在本地处理，无需联网，保障隐私安全。",
     "about_feature_desc_en": "AuraNote is a fully offline intelligent meeting minutes system.\nPowered by FunASR speech recognition and sherpa-onnx voiceprint diarization,\nit supports real-time transcription, offline high-accuracy transcription,\nand multi-speaker voiceprint separation & matching.\nAll audio data is processed locally — no internet required, ensuring complete privacy.",
-    "about_menu": "关于声纪",
-    "about_window_title": "关于声纪",
+    "about_menu": "关于听纪",
+    "about_window_title": "关于听纪",
     "copyright": "© 2026 Eastlake Studio",
     "model_name": "模型名称",
     "zhipu": "智谱AI",
@@ -33,6 +33,11 @@ let zhLocale: [String: String] = [
     "voice_model_not_ready": "语音模型未下载",
     "model_not_downloaded_banner_title": "语音模型尚未下载",
     "model_not_downloaded_banner_desc": "点击此处前往系统配置下载模型，完成后即可使用全部功能",
+    "cloud_model_not_ready": "云端模型未配置 Key",
+    "cloud_model_ready_prefix": "云端大模型",
+    "cloud_key_missing_banner_title": "云端大模型尚未配置 API Key",
+    "cloud_key_missing_banner_desc": "点击此处前往系统配置填入 API Key，开启高精识别与抢话分离",
+    "switch_to_cloud_engine": "切换为云端大模型",
     "voice_model_ready": "已就绪",
     "model_downloading": "正在下载语音模型...",
     "settings_saved": "配置已保存",
@@ -40,7 +45,7 @@ let zhLocale: [String: String] = [
     "status_ready": "准备就绪",
     "permission_hint": "请前往「系统设置 - 隐私与安全性 - 麦克风/语音识别」中开启权限。",
     "model_ready_suffix": "已就绪",
-    "app_title": "声纪",
+    "app_title": "听纪",
     "personnel_voiceprint": "人员与声纹",
     "personnel_voiceprint_help": "全局人员与声纹管理",
     "personnel_management": "参会人管理",
@@ -316,16 +321,17 @@ let zhLocale: [String: String] = [
     "time_group_this_month": "本月",
     "time_group_last_month": "上月",
     "time_group_earlier": "更早",
-    "hint_create_meeting_title": "欢迎使用声纪",
+    "hint_create_meeting_title": "欢迎使用听纪",
     "hint_create_meeting_desc": "点击此按钮即可创建新会议，支持实时录音或导入音频文件。",
     "got_it": "知道了",
-    "welcome_title": "欢迎使用声纪",
+    "welcome_title": "欢迎使用听纪",
     "wizard_settings_title": "系统配置",
-    "wizard_settings_desc": "下载语音识别模型，调整录音与声纹分离算法参数，让声纪适配你的使用场景。",
+    "wizard_settings_desc": "下载语音识别模型，调整录音与声纹分离算法参数，让听纪适配你的使用场景。",
+    "enable_debug": "启用调试",
     "wizard_personnel_title": "人员管理",
     "wizard_personnel_desc": "管理参会人员信息与声纹特征，系统将自动识别历史说话人并绑定到对应联系人。",
     "wizard_meeting_title": "创建会议",
-    "wizard_meeting_desc": "开始实时录音或导入音频文件，声纪将自动完成转写、声纹分离与说话人匹配。",
+    "wizard_meeting_desc": "开始实时录音或导入音频文件，听纪将自动完成转写、声纹分离与说话人匹配。",
     "wizard_hotwords_title": "热词管理",
     "wizard_hotwords_desc": "配置全局生效的自定义热词及权重，提升特定专业词汇的识别准确率。",
     "wizard_batch_title": "会议管理",
@@ -361,12 +367,53 @@ let zhLocale: [String: String] = [
 
     // 声纹分离策略区
     "funasr_engine_title": "FunASR 语音识别引擎",
+    "model_precision_label": "模型精度",
+    "model_precision_int8": "int8 (内置)",
+    "model_precision_fp32": "fp32 (高精度)",
+    "model_precision_int8_desc": "量化模型已内置 (227MB)，体积小速度快，日常会议够用",
+    "model_precision_fp32_desc": "全精度约 823MB，识别更准，适合高要求场景",
+    "download_fp32": "下载 fp32 模型",
+    "remove_fp32": "移除 fp32 模型",
+    "fp32_downloading": "下载中...",
+    "fp32_restart_hint": "fp32 模型已下载，重启应用后生效",
     "diarization_strategy_title": "声纹分离策略",
     "diarization_strategy_hint": "选择适合当前会议的声纹识别模式：",
     "preset_strict": "更多人 (严格分离)",
     "preset_balanced": "适中 (智能推荐)",
     "preset_aggressive": "更少人 (激进合并)",
     "advanced_settings": "高级设置",
+    "cloud_model_section_title": "云端大模型",
+    "cloud_model_select": "选择模型",
+    "cloud_model_api_url": "API URL",
+    "cloud_api_key_label": "API Key",
+    "cloud_api_key_placeholder": "请输入该模型的 API Key",
+    "cloud_api_key_saved": "已安全存储于钥匙串",
+    "cloud_api_key_empty": "未配置 Key",
+    "cloud_save_key": "保存到钥匙串",
+    "cloud_clear_key": "清除 Key",
+    "cloud_test_connection": "测试连接",
+    "cloud_testing": "连接测试中...",
+    "cloud_test_success": "连接成功",
+    "cloud_test_failed": "连接失败",
+    "cloud_security_tip": "安全性保证：API Key 仅加密存储于本地 Keychain（系统钥匙串），绝不随配置文件或明文存储，亦不记录明文日志。",
+    "cloud_prompt_title": "纪要整理提示词",
+    "cloud_prompt_zh": "中文提示词",
+    "cloud_prompt_en": "英文提示词",
+    "generate_ai_summary": "生成 AI 纪要",
+    "regenerate_summary": "重新生成纪要",
+    "ai_summary_title": "AI 会议纪要",
+    "ai_generating_summary": "AI 正在分析发言记录并生成纪要...",
+    "copy_summary": "拷贝纪要",
+    "copied": "已拷贝",
+    "transcription_engine_preference": "转写引擎首选项",
+    "engine_local_funasr": "本地 FunASR (离线)",
+    "engine_cloud_model": "云端大模型 (高精)",
+    "test_audio_transcription": "测试语音转写",
+    "testing_audio_transcription": "转写测试中...",
+    "model_supports_audio": "支持语音转写",
+    "cloud_transcribe_engine_hint": "在实时会议或录音转写时，使用云端大模型进行高精度识别（支持微软 MAI-Transcribe-2、Gemini 3.5、阿里 Qwen-Audio、OpenRouter 等）",
+    "retranscribe_with_local": "本地模型重转写",
+    "retranscribe_with_cloud": "云端大模型重转写",
 ] 
 let enLocale: [String: String] = [
     "settings": "Settings", "save": "Save",
@@ -396,6 +443,11 @@ let enLocale: [String: String] = [
     "voice_model_not_ready": "Voice model not downloaded",
     "model_not_downloaded_banner_title": "Voice model not downloaded",
     "model_not_downloaded_banner_desc": "Tap to download the model in Settings to unlock all features",
+    "cloud_model_not_ready": "Cloud Key Not Set",
+    "cloud_model_ready_prefix": "Cloud Model",
+    "cloud_key_missing_banner_title": "Cloud Model API Key Required",
+    "cloud_key_missing_banner_desc": "Tap here to configure API Key in Settings to start high-accuracy transcription",
+    "switch_to_cloud_engine": "Switch to Cloud Model",
     "voice_model_ready": "Ready",
     "model_downloading": "Downloading voice model...",
     "settings_saved": "Settings saved",
@@ -690,6 +742,7 @@ let enLocale: [String: String] = [
     "welcome_title": "Welcome to AuraNote",
     "wizard_settings_title": "Settings",
     "wizard_settings_desc": "Download the speech recognition model and fine-tune recording & diarization parameters to fit your needs.",
+    "enable_debug": "Enable Debug",
     "wizard_personnel_title": "Personnel",
     "wizard_personnel_desc": "Manage attendee profiles and voiceprints. The system will automatically recognize returning speakers and link them to contacts.",
     "wizard_meeting_title": "Create Meeting",
@@ -706,18 +759,71 @@ let enLocale: [String: String] = [
     "industry_words": "Hotwords (space separated)",
     "add": "Add",
     "funasr_engine_title": "FunASR Speech Engine",
+    "model_precision_label": "Precision",
+    "model_precision_int8": "int8 (built-in)",
+    "model_precision_fp32": "fp32 (high precision)",
+    "model_precision_int8_desc": "Quantized model built-in (227MB), compact & fast for daily use",
+    "model_precision_fp32_desc": "Full-precision ~823MB, better accuracy for demanding scenarios",
+    "download_fp32": "Download fp32 Model",
+    "remove_fp32": "Remove fp32 Model",
+    "fp32_downloading": "Downloading...",
+    "fp32_restart_hint": "fp32 model downloaded. Restart the app to take effect.",
     "diarization_strategy_title": "Speaker Diarization",
     "diarization_strategy_hint": "Select the speaker recognition mode for this meeting:",
     "preset_strict": "More Speakers (Strict)",
     "preset_balanced": "Balanced (Recommended)",
     "preset_aggressive": "Fewer Speakers (Aggressive)",
     "advanced_settings": "Advanced Settings",
+    "cloud_model_section_title": "Cloud LLM",
+    "cloud_model_select": "Select Model",
+    "cloud_model_api_url": "API URL",
+    "cloud_api_key_label": "API Key",
+    "cloud_api_key_placeholder": "Enter API Key for this model",
+    "cloud_api_key_saved": "Securely stored in Keychain",
+    "cloud_api_key_empty": "Key not configured",
+    "cloud_save_key": "Save to Keychain",
+    "cloud_clear_key": "Clear Key",
+    "cloud_test_connection": "Test Connection",
+    "cloud_testing": "Testing connection...",
+    "cloud_test_success": "Connected successfully",
+    "cloud_test_failed": "Connection failed",
+    "cloud_security_tip": "Security Guarantee: API Key is encrypted in local Keychain only, never stored in plaintext config files or plaintext logs.",
+    "cloud_prompt_title": "Summary Prompts",
+    "cloud_prompt_zh": "Chinese Prompt",
+    "cloud_prompt_en": "English Prompt",
+    "generate_ai_summary": "Generate AI Summary",
+    "regenerate_summary": "Regenerate Summary",
+    "ai_summary_title": "AI Meeting Summary",
+    "ai_generating_summary": "AI is generating meeting summary...",
+    "copy_summary": "Copy Summary",
+    "copied": "Copied",
+    "transcription_engine_preference": "Transcription Engine Preference",
+    "engine_local_funasr": "Local FunASR (Offline)",
+    "engine_cloud_model": "Cloud Model (High Accuracy)",
+    "test_audio_transcription": "Test Audio Transcribe",
+    "testing_audio_transcription": "Testing transcribe...",
+    "model_supports_audio": "Audio Capable",
+    "cloud_transcribe_engine_hint": "Use cloud LLM for high-accuracy speech transcription during live meetings or recording reviews.",
+    "retranscribe_with_local": "Re-transcribe (Local)",
+    "retranscribe_with_cloud": "Re-transcribe (Cloud LLM)",
 ]
 
 struct SettingsView: View {
     @State private var settings = SettingsManager.shared
     @State private var showLangPicker = false
     @State private var showAdvancedAlgorithms = false
+    @State private var cloudModelManager = CloudModelManager.shared
+    @State private var inputApiKey: String = ""
+    @State private var isApiKeyVisible: Bool = false
+    @State private var isTestingConnection: Bool = false
+    @State private var connectionTestMessage: String? = nil
+    @State private var connectionTestSuccess: Bool? = nil
+    @State private var showPromptSettings: Bool = false
+    @State private var customApiURL: String = ""
+    @State private var isTestingAudioTranscription: Bool = false
+    @State private var audioTestMessage: String? = nil
+    @State private var audioTestSuccess: Bool? = nil
+    @State private var showConfirmClearLocalModels: Bool = false
 
     private let labelWidth: CGFloat = 85
 
@@ -730,6 +836,14 @@ struct SettingsView: View {
                     .font(.title2)
                     .fontWeight(.semibold)
                 Spacer()
+                Toggle(isOn: $settings.showDebug) {
+                    Text(loc("enable_debug"))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .fixedSize()
             }
             .padding()
             .background(.regularMaterial)
@@ -740,33 +854,41 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 24) {
                     // 模块一：引擎状态
                     modelsSection
+
+                    // 模块二：云端大模型配置
+                    cloudModelSection
                     
-                    // 模块二：算法策略与进阶调试
+                    // 模块三：算法策略与进阶调试
                     algorithmSection
                     
                     Spacer(minLength: 32)
-                    
-                    // 底部关于与授权说明
-                    VStack(spacing: 6) {
-                        Text("v\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0")")
-                            .font(.caption)
-                            .fontWeight(.semibold)
-                        Text(loc("about_desc"))
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                        Text(loc("copyright"))
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.top, 16)
                 }
                 .padding(24)
             }
+
+            // 底部关于（始终固定在页面底部）
+            Divider()
+            VStack(spacing: 6) {
+                Text("v\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0")")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                Text(loc("about_desc"))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Text(loc("copyright"))
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(12)
+            .background(.regularMaterial)
         }
         .frame(minWidth: 960, minHeight: 760)
         .background(.regularMaterial)
-        .onAppear { settings.load() }
+        .onAppear { 
+            settings.load()
+            loadCurrentModelSettings()
+        }
         .navigationTitle(loc("settings"))
     }
 
@@ -774,8 +896,41 @@ struct SettingsView: View {
     
     private var modelsSection: some View {
         VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Label(loc("speech_model"), systemImage: "waveform.badge.magnifyingglass")
+                    .font(.headline)
+                    .foregroundStyle(.teal)
+                Spacer()
+            }
+
+            // 转写引擎首选项选择
+            VStack(alignment: .leading, spacing: 8) {
+                Text(loc("transcription_engine_preference"))
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+
+                Picker("", selection: $settings.transcriptionEngine) {
+                    Label(loc("engine_local_funasr"), systemImage: "waveform.circle.fill")
+                        .tag(TranscriptionEngineType.localFunASR)
+                    Label(loc("engine_cloud_model"), systemImage: "cloud.fill")
+                        .tag(TranscriptionEngineType.cloudModel)
+                }
+                .pickerStyle(.segmented)
+                .frame(maxWidth: 420)
+
+                Text(loc("cloud_transcribe_engine_hint"))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(10)
+            .background(Color.secondary.opacity(0.06))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+
+            Divider()
+
             Label(loc("funasr_engine_title"), systemImage: "waveform.circle.fill")
-                .font(.headline)
+                .font(.subheadline)
+                .fontWeight(.medium)
                 .foregroundStyle(.teal)
 
             // 模型状态汇总（单 Paraformer 模型，同时用于实时转写和离线高精度）
@@ -815,11 +970,433 @@ struct SettingsView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
+
+            Divider()
+
+            // fp32 精度模型管理
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .top, spacing: 16) {
+                    HStack(spacing: 8) {
+                        Circle()
+                            .fill(settings.isFp32ModelAvailable ? Color.blue : Color.secondary.opacity(0.3))
+                            .frame(width: 6, height: 6)
+                            .padding(.top, 3)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(loc("model_precision_label"))
+                                .font(.caption)
+                                .fontWeight(.medium)
+                            Text(settings.isFp32ModelAvailable
+                                 ? loc("model_precision_fp32")
+                                 : loc("model_precision_int8"))
+                                .font(.system(size: 10, weight: .regular, design: .monospaced))
+                                .foregroundStyle(settings.isFp32ModelAvailable ? Color.blue : Color.secondary)
+                        }
+                    }
+
+                    Spacer()
+
+                    VStack(alignment: .trailing, spacing: 4) {
+                        if settings.isFp32Downloading {
+                            Text(loc("fp32_downloading"))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            ProgressView(value: settings.fp32DownloadProgress)
+                                .frame(width: 80)
+                            Text("\(Int(settings.fp32DownloadProgress * 100))%")
+                                .font(.system(size: 9, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                            Button(loc("cancel")) {
+                                settings.cancelFp32Download()
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                        } else if settings.isFp32ModelAvailable {
+                            Button(loc("remove_fp32")) {
+                                settings.removeFp32Model()
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .tint(.red)
+                        } else {
+                            Text(loc("model_precision_fp32_desc"))
+                                .font(.system(size: 9))
+                                .foregroundStyle(.secondary)
+                                .multilineTextAlignment(.trailing)
+                            Button(loc("download_fp32")) {
+                                settings.startFp32Download(useMirror: true)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.small)
+                            .tint(.blue)
+                        }
+                    }
+                }
+
+                // 当前精度说明
+                if settings.isFp32ModelAvailable {
+                    Text(loc("model_precision_fp32_desc"))
+                        .font(.system(size: 9))
+                        .foregroundStyle(.secondary.opacity(0.7))
+                } else if !settings.isFp32Downloading {
+                    Text(loc("model_precision_int8_desc"))
+                        .font(.system(size: 9))
+                        .foregroundStyle(.secondary.opacity(0.7))
+                }
+
+                Divider()
+
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("本地离线模型存储管理")
+                            .font(.caption)
+                            .fontWeight(.medium)
+                        Text("当前沙盒占用: \(settings.localModelsDiskUsageString)（主要使用云端大模型时可清理释放空间）")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("清理本地模型缓存") {
+                        showConfirmClearLocalModels = true
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .tint(.red)
+                }
+                .confirmationDialog(
+                    "确认清理本地模型缓存",
+                    isPresented: $showConfirmClearLocalModels,
+                    titleVisibility: .visible
+                ) {
+                    Button("确认彻底删除本地离线模型文件", role: .destructive) {
+                        settings.removeAllLocalASRModels()
+                    }
+                    Button("取消", role: .cancel) {}
+                } message: {
+                    Text("将彻底删除沙盒内已下载的 FunASR / WhisperKit 等离线模型文件。云端大模型转写不受任何影响。")
+                }
+            }
         }
         .padding(20)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: 12).fill(.background.opacity(0.4)))
         .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.primary.opacity(0.08), lineWidth: 1))
+    }
+
+    // MARK: - 云端大模型配置
+
+    private var cloudModelSection: some View {
+        let currentModel = cloudModelManager.selectedModel
+        let isConfigured = cloudModelManager.isCurrentModelConfigured
+
+        return VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Label(loc("cloud_model_section_title"), systemImage: "cloud.fill")
+                    .font(.headline)
+                    .foregroundStyle(.purple)
+                Spacer()
+                // 状态徽标
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(isConfigured ? Color.green : Color.secondary.opacity(0.4))
+                        .frame(width: 8, height: 8)
+                    Text(isConfigured ? loc("cloud_api_key_saved") : loc("cloud_api_key_empty"))
+                        .font(.caption)
+                        .foregroundStyle(isConfigured ? .green : .secondary)
+                }
+            }
+
+            // 模型选择器 Picker
+            HStack(alignment: .center, spacing: 12) {
+                Text(loc("cloud_model_select"))
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .frame(width: labelWidth, alignment: .leading)
+
+                Picker("", selection: Binding(
+                    get: { cloudModelManager.selectedModelId },
+                    set: { newId in
+                        cloudModelManager.selectedModelId = newId
+                        loadCurrentModelSettings()
+                    }
+                )) {
+                    ForEach(cloudModelManager.models) { m in
+                        Text(m.name).tag(m.id)
+                    }
+                }
+                .pickerStyle(.menu)
+                .frame(maxWidth: 320)
+
+                // 厂商标签
+                Text(currentModel.provider)
+                    .font(.caption2)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Color.purple.opacity(0.12))
+                    .foregroundStyle(.purple)
+                    .clipShape(Capsule())
+
+                if currentModel.isAudioTranscribeCapable {
+                    Label(loc("model_supports_audio"), systemImage: "waveform")
+                        .font(.caption2)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(Color.teal.opacity(0.15))
+                        .foregroundStyle(.teal)
+                        .clipShape(Capsule())
+                }
+
+                Spacer()
+            }
+
+            // API URL 显示与编辑
+            HStack(alignment: .center, spacing: 12) {
+                Text(loc("cloud_model_api_url"))
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .frame(width: labelWidth, alignment: .leading)
+
+                if currentModel.isCustomConfigurable {
+                    TextField("https://...", text: $customApiURL)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(.caption, design: .monospaced))
+                        .onChange(of: customApiURL) { _, newValue in
+                            var updated = currentModel
+                            updated.apiURL = newValue
+                            cloudModelManager.updateModel(updated)
+                        }
+                } else {
+                    Text(currentModel.apiURL)
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .textSelection(.enabled)
+                }
+                Spacer()
+            }
+
+            // API-KEY 输入与安全存储操作
+            HStack(alignment: .center, spacing: 12) {
+                Text(loc("cloud_api_key_label"))
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .frame(width: labelWidth, alignment: .leading)
+
+                HStack(spacing: 6) {
+                    if isApiKeyVisible {
+                        TextField(loc("cloud_api_key_placeholder"), text: $inputApiKey)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(.caption, design: .monospaced))
+                    } else {
+                        SecureField(loc("cloud_api_key_placeholder"), text: $inputApiKey)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(.caption, design: .monospaced))
+                    }
+
+                    Button {
+                        isApiKeyVisible.toggle()
+                    } label: {
+                        Image(systemName: isApiKeyVisible ? "eye.slash" : "eye")
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help(isApiKeyVisible ? "隐藏 Key" : "显示 Key")
+                }
+                .frame(maxWidth: 380)
+
+                // 保存按钮
+                Button(loc("cloud_save_key")) {
+                    cloudModelManager.saveApiKey(inputApiKey, for: currentModel.id)
+                    connectionTestMessage = nil
+                    connectionTestSuccess = nil
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .tint(.purple)
+
+                // 清除按钮
+                if isConfigured {
+                    Button(loc("cloud_clear_key")) {
+                        cloudModelManager.deleteApiKey(for: currentModel.id)
+                        inputApiKey = ""
+                        connectionTestMessage = nil
+                        connectionTestSuccess = nil
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .tint(.red)
+                }
+
+                // 测试连接按钮
+                Button {
+                    testConnection()
+                } label: {
+                    if isTestingConnection {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Text(loc("cloud_test_connection"))
+                    }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(isTestingConnection || inputApiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                // 测试语音转写按钮（仅针对具备音频能力的模型）
+                if currentModel.isAudioTranscribeCapable {
+                    Button {
+                        testAudioTranscription()
+                    } label: {
+                        if isTestingAudioTranscription {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Label(loc("test_audio_transcription"), systemImage: "waveform")
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .tint(.teal)
+                    .disabled(isTestingAudioTranscription || inputApiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+
+                Spacer()
+            }
+
+            // 连接测试结果提示
+            if let success = connectionTestSuccess, let msg = connectionTestMessage {
+                HStack(spacing: 6) {
+                    Image(systemName: success ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
+                        .foregroundStyle(success ? .green : .red)
+                    Text(msg)
+                        .font(.caption)
+                        .foregroundStyle(success ? .green : .red)
+                }
+                .padding(.leading, labelWidth + 12)
+            }
+
+            // 语音转写测试结果提示
+            if let success = audioTestSuccess, let msg = audioTestMessage {
+                HStack(spacing: 6) {
+                    Image(systemName: success ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
+                        .foregroundStyle(success ? .green : .red)
+                    Text("语音转写: \(msg)")
+                        .font(.caption)
+                        .foregroundStyle(success ? .green : .red)
+                }
+                .padding(.leading, labelWidth + 12)
+            }
+
+            // 安全性保证说明
+            HStack(spacing: 6) {
+                Image(systemName: "lock.shield.fill")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Text(loc("cloud_security_tip"))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.top, 2)
+
+            Divider()
+
+            // 展开提示词 Prompt 设置
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    showPromptSettings.toggle()
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: showPromptSettings ? "chevron.down" : "chevron.right")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text(loc("cloud_prompt_title"))
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                        .foregroundStyle(.primary)
+                    Spacer()
+                }
+            }
+            .buttonStyle(.plain)
+
+            if showPromptSettings {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(loc("cloud_prompt_zh"))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    TextEditor(text: $settings.summaryPromptZH)
+                        .font(.caption)
+                        .frame(height: 70)
+                        .border(Color.secondary.opacity(0.2), width: 1)
+
+                    Text(loc("cloud_prompt_en"))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    TextEditor(text: $settings.summaryPromptEN)
+                        .font(.caption)
+                        .frame(height: 70)
+                        .border(Color.secondary.opacity(0.2), width: 1)
+                }
+                .padding(.top, 4)
+            }
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 12).fill(.background.opacity(0.4)))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.primary.opacity(0.08), lineWidth: 1))
+    }
+
+    private func loadCurrentModelSettings() {
+        let currentModel = cloudModelManager.selectedModel
+        inputApiKey = cloudModelManager.apiKey(for: currentModel.id)
+        customApiURL = currentModel.apiURL
+        connectionTestMessage = nil
+        connectionTestSuccess = nil
+        audioTestMessage = nil
+        audioTestSuccess = nil
+    }
+
+    private func testConnection() {
+        let currentModel = cloudModelManager.selectedModel
+        let key = inputApiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty else { return }
+
+        isTestingConnection = true
+        connectionTestMessage = nil
+        connectionTestSuccess = nil
+
+        Task {
+            do {
+                let reply = try await CloudLLMService.shared.testConnection(model: currentModel, apiKey: key)
+                await MainActor.run {
+                    isTestingConnection = false
+                    connectionTestSuccess = true
+                    connectionTestMessage = "\(loc("cloud_test_success")): \(reply)"
+                }
+            } catch {
+                await MainActor.run {
+                    isTestingConnection = false
+                    connectionTestSuccess = false
+                    connectionTestMessage = "\(loc("cloud_test_failed")): \(error.localizedDescription)"
+                }
+            }
+        }
+    }
+
+    private func testAudioTranscription() {
+        let currentModel = cloudModelManager.selectedModel
+        let key = inputApiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty else { return }
+
+        isTestingAudioTranscription = true
+        audioTestMessage = nil
+        audioTestSuccess = nil
+
+        Task {
+            let result = await CloudTranscriptionService.shared.testAudioConnection(model: currentModel, apiKey: key)
+            await MainActor.run {
+                isTestingAudioTranscription = false
+                audioTestSuccess = result.success
+                audioTestMessage = result.message
+            }
+        }
     }
 
     private var algorithmSection: some View {

@@ -66,4 +66,66 @@ final class SettingsManagerTests: XCTestCase {
         
         XCTAssertTrue(manager.isLLMConfigured)
     }
+
+    // MARK: - 多引擎就绪与自适应切换测试
+
+    func testEngineReadinessWithCloudModelAndKey() {
+        let manager = SettingsManager.shared
+        manager.transcriptionEngine = .cloudModel
+
+        let cloudManager = CloudModelManager.shared
+        cloudManager.load()
+        let testModelId = "gemini-transcribe"
+        cloudManager.saveApiKey("test_mock_gemini_key_123", for: testModelId)
+
+        // 验证在有 Key 情况下，云端转写引擎就绪，且 isModelAvailable 返回 true
+        XCTAssertTrue(TranscriptionEngineCoordinator.shared.isCloudTranscriptionReady)
+        XCTAssertTrue(manager.isCurrentEngineReady)
+        XCTAssertTrue(manager.isModelAvailable)
+
+        // 清理测试 Key
+        cloudManager.deleteApiKey(for: testModelId)
+    }
+
+    func testEngineReadinessWithoutKey() {
+        let manager = SettingsManager.shared
+        manager.transcriptionEngine = .cloudModel
+
+        let cloudManager = CloudModelManager.shared
+        cloudManager.load()
+        // 清理所有音频模型的 Key
+        for model in cloudManager.models where model.isAudioTranscribeCapable {
+            cloudManager.deleteApiKey(for: model.id)
+        }
+
+        // 验证在没有任何 Key 情况下，云端转写未就绪，isModelAvailable 返回 false
+        XCTAssertFalse(TranscriptionEngineCoordinator.shared.isCloudTranscriptionReady)
+        XCTAssertFalse(manager.isCurrentEngineReady)
+        XCTAssertFalse(manager.isModelAvailable)
+    }
+
+    func testAutoSwitchToCloudOnLocalModelDeletion() {
+        let manager = SettingsManager.shared
+        manager.removeAllLocalASRModels()
+
+        // 验证清理本地模型后，引擎自动自适应切换到 cloudModel
+        XCTAssertEqual(manager.transcriptionEngine, .cloudModel)
+    }
+
+    func testEngineDidChangeNotification() {
+        let manager = SettingsManager.shared
+        let expectation = expectation(description: "Wait for engineDidChangeNotification")
+
+        let observer = NotificationCenter.default.addObserver(
+            forName: SettingsManager.engineDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { _ in
+            expectation.fulfill()
+        }
+
+        manager.transcriptionEngine = .cloudModel
+        wait(for: [expectation], timeout: 1.0)
+        NotificationCenter.default.removeObserver(observer)
+    }
 }

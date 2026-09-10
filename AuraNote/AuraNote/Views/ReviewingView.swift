@@ -36,6 +36,14 @@ struct ReviewingView: View {
     // 本地桥接 ViewModel 的 showSaveNewContactsAlert，确保 sheet 可靠弹出
     @State private var showSaveSheet = false
 
+    // 云端大模型与 AI 会议纪要
+    @State private var isGeneratingSummary: Bool = false
+    @State private var summaryErrorMessage: String? = nil
+    @State private var showSummaryErrorAlert: Bool = false
+    @State private var showSummaryCard: Bool = true
+    @State private var isSummaryCopied: Bool = false
+    @State private var summaryTask: Task<Void, Never>? = nil
+
     private var retryButtonLabel: String {
         if viewModel.isTranscribingOffline { return loc("analyzing") }
         if viewModel.transcriptSegments.isEmpty { return loc("reanalyze") }
@@ -305,14 +313,14 @@ struct ReviewingView: View {
                     .help(loc("back"))
                 }
                 ToolbarItemGroup(placement: .primaryAction) {
-#if DEBUG
+                    if SettingsManager.shared.showDebug {
                     Button {
                         showDebugLog = true
                     } label: {
                         Image(systemName: "ladybug")
                     }
                     .help(loc("debug_log"))
-#endif
+                    }
                     // 搜索按钮
                     Button {
                         withAnimation { showSearch.toggle() }
@@ -398,10 +406,14 @@ struct ReviewingView: View {
                 attendeesString = viewModel.currentMeeting?.attendees ?? ""
             }
             .onChange(of: viewModel.transcriptSegments.map(\.speakerLabel)) { _, labels in
+                // 自动将非匿名标签加入与会者列表（仅新增，不影响已有）
                 for label in labels {
                     let trimmed = label.trimmingCharacters(in: .whitespaces)
-                    guard !trimmed.isEmpty, !trimmed.hasPrefix("Speaker_"), trimmed != "?" else { continue }
-                    addAttendeeFromLabel(trimmed)
+                    guard !trimmed.isEmpty, trimmed != "?" else { continue }
+                    // 只要是明确的名称（非 Speaker_ 匿名），都加入参会人
+                    if !trimmed.hasPrefix("Speaker_") {
+                        addAttendeeFromLabel(trimmed)
+                    }
                 }
             }
             .onChange(of: viewModel.audioPlayer.currentTime) { _, time in
@@ -447,9 +459,19 @@ struct ReviewingView: View {
         }
         .alert(loc("confirm_retranscribe"), isPresented: $showRetryConfirm) {
             Button(loc("cancel"), role: .cancel) { pendingRetryAction = nil }
-            Button(loc("confirm"), role: .destructive) {
-                pendingRetryAction?()
+            Button(loc("retranscribe_with_local")) {
+                if let meeting = viewModel.currentMeeting {
+                    viewModel.retryOfflineTranscription(for: meeting.id, audioURL: meeting.localAudioURL, engine: .localFunASR)
+                }
                 pendingRetryAction = nil
+            }
+            if TranscriptionEngineCoordinator.shared.isCloudTranscriptionReady {
+                Button(loc("retranscribe_with_cloud")) {
+                    if let meeting = viewModel.currentMeeting {
+                        viewModel.retryOfflineTranscription(for: meeting.id, audioURL: meeting.localAudioURL, engine: .cloudModel)
+                    }
+                    pendingRetryAction = nil
+                }
             }
         } message: {
             Text(String(format: loc("confirm_retranscribe_msg"), viewModel.transcriptSegments.count))
@@ -526,10 +548,29 @@ struct ReviewingView: View {
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                     if meeting.audioFileExists {
-                        Button(loc("rerun_transcription")) {
+                        Menu {
+                            if TranscriptionEngineCoordinator.shared.isCloudTranscriptionReady {
+                                Button {
+                                    viewModel.isTranscribingOffline = true
+                                    viewModel.retryOfflineTranscription(for: meeting.id, audioURL: meeting.localAudioURL, engine: .cloudModel)
+                                } label: {
+                                    Label(loc("retranscribe_with_cloud"), systemImage: "cloud.fill")
+                                }
+                            }
+                            Button {
+                                viewModel.isTranscribingOffline = true
+                                viewModel.retryOfflineTranscription(for: meeting.id, audioURL: meeting.localAudioURL, engine: .localFunASR)
+                            } label: {
+                                Label(loc("retranscribe_with_local"), systemImage: "waveform.circle.fill")
+                            }
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: SettingsManager.shared.transcriptionEngine == .cloudModel ? "cloud.fill" : "waveform.circle.fill")
+                                Text(loc("rerun_transcription"))
+                            }
+                        } primaryAction: {
                             viewModel.isTranscribingOffline = true
-                            let url = meeting.localAudioURL
-                            viewModel.retryOfflineTranscription(for: meeting.id, audioURL: url)
+                            viewModel.retryOfflineTranscription(for: meeting.id, audioURL: meeting.localAudioURL)
                         }
                         .buttonStyle(.borderedProminent)
                         .tint(.purple)
@@ -570,37 +611,38 @@ struct ReviewingView: View {
                 contacts: databaseManager.fetchAllContacts().map { $0.name },
                 onPlaySegment: { seg in playSegment(seg) },
                 onSpeakerChanged: { segId, newSpeaker in
-                        // 若是临时发言人，则全局替换；否则仅修改当前这一句的错误归属
+                        AppLog.info("[SpeakerChange] segId=\(segId) newSpeaker='\(newSpeaker)' totalSegments=\(viewModel.transcriptSegments.count)")
+                        // 统一只改当前一句，不再全局重命名
                         if let idx = viewModel.transcriptSegments.firstIndex(where: { $0.id == segId }) {
                             let oldLabel = viewModel.transcriptSegments[idx].speakerLabel
+                            AppLog.info("[SpeakerChange] found idx=\(idx) oldLabel='\(oldLabel)'")
+
+                            // 创建或查找联系人
                             var contact = databaseManager.fetchContact(byName: newSpeaker)
                             if contact == nil {
                                 contact = Contact.create(name: newSpeaker)
                                 try? databaseManager.saveContact(contact!)
                             }
-                            
-                            if oldLabel.hasPrefix("Speaker_") {
-                                viewModel.globalRenameSpeaker(oldName: oldLabel, newName: newSpeaker, contactId: contact?.id)
-                                // 仅在全局重命名时（旧代号不再存在），才同步切换过滤条件
-                                if filterSpeaker == oldLabel {
-                                    filterSpeaker = newSpeaker
-                                }
-                            } else {
-                                viewModel.transcriptSegments[idx].speakerLabel = newSpeaker
-                                viewModel.transcriptSegments[idx].contactId = contact?.id
-                                try? databaseManager.updateSpeechClipContact(
-                                    clipId: segId, speakerLabel: newSpeaker, contactId: contact?.id
-                                )
-                                // 实时同步到数据库
-                                if let meetingId = viewModel.currentMeeting?.id {
-                                    let segs = viewModel.transcriptSegments
-                                    Task { @MainActor in
-                                        viewModel.saveSegmentsToDatabase(meetingId: meetingId, segments: segs)
-                                    }
-                                }
+
+                            // 只改当前句
+                            viewModel.transcriptSegments[idx].speakerLabel = newSpeaker
+                            viewModel.transcriptSegments[idx].contactId = contact?.id
+                            try? databaseManager.updateSpeechClipContact(
+                                clipId: segId, speakerLabel: newSpeaker, contactId: contact?.id
+                            )
+
+                            // 同步过滤条件
+                            if filterSpeaker == oldLabel {
+                                filterSpeaker = newSpeaker
                             }
+
+                            // 如果 newSpeaker 不是 Speaker_ 匿名，确保加入参会人
+                            if !newSpeaker.hasPrefix("Speaker_") && newSpeaker != "?" {
+                                addAttendeeFromLabel(newSpeaker)
+                            }
+                        } else {
+                            AppLog.warn("[SpeakerChange] segId '\(segId)' not found in transcriptSegments!")
                         }
-                        addAttendeeFromLabel(newSpeaker)
                 },
                 onTextChanged: { segId, newText in
                     try? databaseManager.updateSpeechClipText(clipId: segId, text: newText)
@@ -711,7 +753,7 @@ struct ReviewingView: View {
     // MARK: - 会议信息卡片
 
     private var meetingSummaryCard: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             if let meeting = viewModel.currentMeeting {
                 HStack {
                     Text(meeting.title)
@@ -733,14 +775,192 @@ struct ReviewingView: View {
                         Label(location, systemImage: "mappin")
                     }
                     Label(String(format: loc("segments_count"), viewModel.transcriptSegments.filter { $0.isFinal }.count), systemImage: "text.bubble")
+
+                    Spacer()
+
+                    // AI 纪要生成/重新生成按钮
+                    aiSummaryTriggerButton(meeting: meeting)
                 }
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
+
+                // 展开的 AI 纪要面板
+                if isGeneratingSummary || (meeting.summary != nil && !meeting.summary!.isEmpty) {
+                    aiSummaryContentCard(meeting: meeting)
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding()
         .background(.ultraThinMaterial)
+    }
+
+    // MARK: - AI 纪要组件
+
+    private func aiSummaryTriggerButton(meeting: Meeting) -> some View {
+        Button {
+            triggerGenerateSummary()
+        } label: {
+            HStack(spacing: 4) {
+                if isGeneratingSummary {
+                    ProgressView().controlSize(.small)
+                    Text(loc("ai_generating_summary"))
+                } else {
+                    Image(systemName: "sparkles")
+                        .foregroundStyle(.purple)
+                    Text((meeting.summary != nil && !meeting.summary!.isEmpty) ? loc("regenerate_summary") : loc("generate_ai_summary"))
+                }
+            }
+            .font(.caption)
+            .fontWeight(.medium)
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        .tint(.purple)
+        .disabled(isGeneratingSummary)
+    }
+
+    private func aiSummaryContentCard(meeting: Meeting) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Label(loc("ai_summary_title"), systemImage: "sparkles")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.purple)
+
+                Text("(\(CloudModelManager.shared.selectedModel.name))")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+
+                Spacer()
+
+                if let summary = meeting.summary, !summary.isEmpty {
+                    Button {
+                        #if os(macOS)
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(summary, forType: .string)
+                        #endif
+                        isSummaryCopied = true
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                            isSummaryCopied = false
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: isSummaryCopied ? "checkmark" : "doc.on.doc")
+                            Text(isSummaryCopied ? loc("copied") : loc("copy_summary"))
+                        }
+                        .font(.caption2)
+                    }
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(isSummaryCopied ? .green : .secondary)
+                }
+
+                Button {
+                    withAnimation {
+                        showSummaryCard.toggle()
+                    }
+                } label: {
+                    Image(systemName: showSummaryCard ? "chevron.up" : "chevron.down")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+
+            if showSummaryCard {
+                if isGeneratingSummary {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text(loc("ai_generating_summary"))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button(loc("cancel")) {
+                            summaryTask?.cancel()
+                            isGeneratingSummary = false
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                    .padding(.vertical, 4)
+                } else if let summary = meeting.summary, !summary.isEmpty {
+                    Text(summary)
+                        .font(.callout)
+                        .textSelection(.enabled)
+                        .lineSpacing(4)
+                        .padding(10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(RoundedRectangle(cornerRadius: 8).fill(Color.purple.opacity(0.04)))
+                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.purple.opacity(0.15), lineWidth: 1))
+                }
+            }
+        }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.03)))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.06), lineWidth: 1))
+        .alert(loc("cloud_test_failed"), isPresented: $showSummaryErrorAlert) {
+            Button(loc("confirm"), role: .cancel) { }
+        } message: {
+            Text(summaryErrorMessage ?? "生成失败")
+        }
+    }
+
+    private func triggerGenerateSummary() {
+        guard let meeting = viewModel.currentMeeting else { return }
+
+        let modelManager = CloudModelManager.shared
+        let selectedModel = modelManager.selectedModel
+        let apiKey = modelManager.apiKey(for: selectedModel.id)
+
+        guard !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            summaryErrorMessage = "尚未配置云端大模型 API Key。请前往系统配置中选择模型并安全输入 API Key。"
+            showSummaryErrorAlert = true
+            return
+        }
+
+        let segments = viewModel.transcriptSegments.filter { $0.isFinal && !$0.text.isEmpty }
+        guard !segments.isEmpty else {
+            summaryErrorMessage = "当前会议暂无有效转写文本，无法生成纪要。"
+            showSummaryErrorAlert = true
+            return
+        }
+
+        let transcriptText = segments.map { seg in
+            let spk = seg.speakerLabel.isEmpty ? "发言人" : seg.speakerLabel
+            return "[\(spk)]: \(seg.text)"
+        }.joined(separator: "\n")
+
+        isGeneratingSummary = true
+        summaryErrorMessage = nil
+        showSummaryCard = true
+
+        summaryTask?.cancel()
+        summaryTask = Task {
+            do {
+                let summary = try await CloudLLMService.shared.generateSummary(
+                    transcript: transcriptText,
+                    model: selectedModel,
+                    apiKey: apiKey
+                )
+
+                await MainActor.run {
+                    self.isGeneratingSummary = false
+                    var updated = meeting
+                    updated.summary = summary
+                    updated.status = .completed
+                    self.viewModel.currentMeeting = updated
+
+                    try? self.databaseManager.updateMeetingSummary(id: meeting.id, summary: summary, status: .completed)
+                }
+            } catch {
+                if Task.isCancelled { return }
+                await MainActor.run {
+                    self.isGeneratingSummary = false
+                    self.summaryErrorMessage = error.localizedDescription
+                    self.showSummaryErrorAlert = true
+                }
+            }
+        }
     }
 
     // MARK: - 音频播放

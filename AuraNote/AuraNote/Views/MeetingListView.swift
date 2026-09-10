@@ -64,14 +64,14 @@ struct MeetingListView: View {
         NavigationStack {
             VStack(spacing: 0) {
                 statusHeader
+                    .id(downloadStateVersion)
 
                 if batchSelectMode, let vm = listVM {
                     batchToolbar(allMeetings: vm.meetings)
                 }
 
-                if !SettingsManager.shared.isModelAvailable && !SettingsManager.shared.currentModelDownloading {
-                    modelDownloadBanner
-                }
+                engineAlertBanner
+                    .id(downloadStateVersion)
 
                 if let vm = listVM {
                     if vm.meetings.isEmpty {
@@ -286,10 +286,71 @@ struct MeetingListView: View {
             .onReceive(NotificationCenter.default.publisher(for: SettingsManager.downloadStateDidChangeNotification)) { _ in
                 downloadStateVersion += 1
             }
+            .onReceive(NotificationCenter.default.publisher(for: SettingsManager.engineDidChangeNotification)) { _ in
+                downloadStateVersion += 1
+            }
+            .onReceive(NotificationCenter.default.publisher(for: SettingsManager.localModelStatusDidChangeNotification)) { _ in
+                downloadStateVersion += 1
+            }
+            .onReceive(NotificationCenter.default.publisher(for: CloudModelManager.modelSelectionDidChangeNotification)) { _ in
+                downloadStateVersion += 1
+            }
+            .onReceive(NotificationCenter.default.publisher(for: SettingsManager.settingsDidChangeNotification)) { _ in
+                downloadStateVersion += 1
+            }
         }
     }
 
     // MARK: - 子视图
+
+    /// 根据当前所选转写引擎自适应展示异常与配置引导横幅
+    @ViewBuilder
+    private var engineAlertBanner: some View {
+        if SettingsManager.shared.transcriptionEngine == .cloudModel {
+            if !TranscriptionEngineCoordinator.shared.isCloudTranscriptionReady {
+                cloudKeyMissingBanner
+            }
+        } else {
+            if !SettingsManager.shared.isFunASROfflineAvailable && !SettingsManager.shared.currentModelDownloading {
+                modelDownloadBanner
+            }
+        }
+    }
+
+    /// 云端大模型未配置 API Key 时的引导横幅（引导前往设置输入 Key）
+    private var cloudKeyMissingBanner: some View {
+        NavigationLink(destination: SettingsView()) {
+            HStack(spacing: 14) {
+                Image(systemName: "cloud.fill")
+                    .font(.system(size: 28))
+                    .foregroundStyle(.white)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(loc("cloud_key_missing_banner_title"))
+                        .font(.title3)
+                        .fontWeight(.bold)
+                        .foregroundStyle(.white)
+                    Text(loc("cloud_key_missing_banner_desc"))
+                        .font(.subheadline)
+                        .foregroundStyle(.white.opacity(0.85))
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.title3)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.white.opacity(0.7))
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 16)
+            .background(
+                LinearGradient(
+                    colors: [Color.purple, Color.purple.opacity(0.85)],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+            )
+        }
+        .buttonStyle(.plain)
+    }
 
     /// 模型未下载时的引导横幅（非阻塞，引导用户前往设置下载）
     private var modelDownloadBanner: some View {
@@ -328,20 +389,34 @@ struct MeetingListView: View {
 
     private var statusHeader: some View {
         let settings = SettingsManager.shared
+
         return HStack {
             Image(systemName: "bolt.fill").foregroundStyle(.green)
             Text(loc("status_ready")).font(.subheadline).foregroundStyle(.secondary)
             Spacer()
-            if settings.currentModelDownloading {
-                ProgressView().scaleEffect(0.7)
-                Text("\(loc("model_downloading")) \(Int(settings.currentModelProgress * 100))%")
-                    .font(.caption).foregroundStyle(.orange)
-            } else if !settings.isModelAvailable {
-                Image(systemName: "exclamationmark.triangle.fill").font(.caption).foregroundStyle(.orange)
-                Text(loc("voice_model_not_ready")).font(.caption).foregroundStyle(.orange)
-            } else {
-                Image(systemName: "checkmark.circle.fill").font(.caption).foregroundStyle(.green)
-                Text("FunASR \(loc("model_ready_suffix"))").font(.caption).foregroundStyle(.secondary)
+
+            switch settings.transcriptionEngine {
+            case .cloudModel:
+                if let active = TranscriptionEngineCoordinator.shared.getActiveCloudTranscriptionModel() {
+                    Image(systemName: "cloud.fill").font(.caption).foregroundStyle(.purple)
+                    Text("\(active.model.name) \(loc("model_ready_suffix"))")
+                        .font(.caption).foregroundStyle(.secondary)
+                } else {
+                    Image(systemName: "exclamationmark.triangle.fill").font(.caption).foregroundStyle(.orange)
+                    Text(loc("cloud_model_not_ready")).font(.caption).foregroundStyle(.orange)
+                }
+            case .localFunASR:
+                if settings.currentModelDownloading {
+                    ProgressView().scaleEffect(0.7)
+                    Text("\(loc("model_downloading")) \(Int(settings.currentModelProgress * 100))%")
+                        .font(.caption).foregroundStyle(.orange)
+                } else if !settings.isFunASROfflineAvailable {
+                    Image(systemName: "exclamationmark.triangle.fill").font(.caption).foregroundStyle(.orange)
+                    Text(loc("voice_model_not_ready")).font(.caption).foregroundStyle(.orange)
+                } else {
+                    Image(systemName: "checkmark.circle.fill").font(.caption).foregroundStyle(.green)
+                    Text("FunASR \(loc("model_ready_suffix"))").font(.caption).foregroundStyle(.secondary)
+                }
             }
         }
         .padding()

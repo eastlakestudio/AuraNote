@@ -6,6 +6,8 @@ final class SettingsManager {
     static let shared = SettingsManager()
     static let settingsDidChangeNotification = Notification.Name("AuraNoteSettingsDidChange")
     static let downloadStateDidChangeNotification = Notification.Name("AuraNoteDownloadStateDidChange")
+    static let engineDidChangeNotification = Notification.Name("AuraNoteEngineDidChange")
+    static let localModelStatusDidChangeNotification = Notification.Name("AuraNoteLocalModelStatusDidChange")
     
     var defaults: UserDefaults = .standard
     
@@ -107,7 +109,7 @@ final class SettingsManager {
         didSet { defaults.set(consumerPollInterval, forKey: "algo_consumer_poll_interval") }
     }
     /// 实时录音单段最大时长（秒），超过强制切分。范围 3.0~20.0
-    var maxChunkDuration: Double = 20.0 {
+    var maxChunkDuration: Double = 30.0 {
         didSet { defaults.set(maxChunkDuration, forKey: "algo_max_chunk_duration") }
     }
     /// VAD (语音活动检测) 阈值。范围 0.05~0.5，越低越敏感。
@@ -132,9 +134,29 @@ final class SettingsManager {
         return modelPath + "/models/funasr/" + subpath
     }
     
+    private static let paraformerModelName = "sherpa-onnx-paraformer-zh-2024-03-09"
+
     /// FunASR Paraformer 模型目录（实时伪流式 + 离线高精度共用）
+    /// 优先返回包含 fp32 模型的目录（沙盒下载或 Bundle 内置），回退到 Bundle int8
     var funasrOfflineModelDir: String {
-        return funasrDir("sherpa-onnx-paraformer-zh-2024-03-09")
+        let sandboxDir = modelPath + "/models/funasr/" + Self.paraformerModelName
+        let sandboxFp32 = sandboxDir + "/model.onnx"
+        let sandboxTokens = sandboxDir + "/tokens.txt"
+        if FileManager.default.fileExists(atPath: sandboxFp32),
+           FileManager.default.fileExists(atPath: sandboxTokens) {
+            return sandboxDir
+        }
+        return funasrDir(Self.paraformerModelName)
+    }
+
+    /// FunASR Paraformer 模型文件路径，优先使用 fp32（带 token 时间戳），回退 int8
+    var funasrOfflineModelPath: String {
+        let dir = funasrOfflineModelDir
+        let fp32 = dir + "/model.onnx"
+        if FileManager.default.fileExists(atPath: fp32) {
+            return fp32
+        }
+        return dir + "/model.int8.onnx"
     }
     
     /// FunASR 标点模型文件路径
@@ -157,11 +179,27 @@ final class SettingsManager {
         return modelPath + "/models/funasr/" + subpath
     }
     
-    /// FunASR Paraformer 模型是否已下载
+    /// FunASR Paraformer 模型是否已下载（兼容 int8 和 fp32）
     var isFunASROfflineAvailable: Bool {
         let dir = funasrOfflineModelDir
-        return FileManager.default.fileExists(atPath: dir + "/model.int8.onnx")
-            && FileManager.default.fileExists(atPath: dir + "/tokens.txt")
+        let hasTokens = FileManager.default.fileExists(atPath: dir + "/tokens.txt")
+        let hasInt8 = FileManager.default.fileExists(atPath: dir + "/model.int8.onnx")
+        let hasFp32 = FileManager.default.fileExists(atPath: dir + "/model.onnx")
+        return hasTokens && (hasInt8 || hasFp32)
+    }
+
+    /// 是否已下载 fp32 精度模型
+    var isFp32ModelAvailable: Bool {
+        let fp32Path = modelPath + "/models/funasr/" + Self.paraformerModelName + "/model.onnx"
+        return FileManager.default.fileExists(atPath: fp32Path)
+    }
+
+    /// fp32 模型精度名称（已就绪时显示）
+    var activeModelPrecision: String {
+        let path = funasrOfflineModelPath
+        if path.hasSuffix("model.onnx") { return "fp32" }
+        if path.hasSuffix("model.int8.onnx") { return "int8" }
+        return ""
     }
     
     /// FunASR 标点模型是否已下载
@@ -173,6 +211,42 @@ final class SettingsManager {
     var useFunASR: Bool {
         get { defaults.object(forKey: "algo_use_funasr") as? Bool ?? true }
         set { defaults.set(newValue, forKey: "algo_use_funasr") }
+    }
+    /// 语音转写引擎类型偏好（若本地 FunASR 模型未下载或已清理，自动推荐/回退至云端大模型）
+    var transcriptionEngine: TranscriptionEngineType {
+        get {
+            if let raw = defaults.string(forKey: "transcription_engine"),
+               let type = TranscriptionEngineType(rawValue: raw) {
+                // 若用户原选了本地引擎，但本地模型文件已被清理/不存在，且云端就绪，自适应回退到云端
+                if type == .localFunASR && !isFunASROfflineAvailable && TranscriptionEngineCoordinator.shared.isCloudTranscriptionReady {
+                    return .cloudModel
+                }
+                return type
+            }
+            if TranscriptionEngineCoordinator.shared.isCloudTranscriptionReady || !isFunASROfflineAvailable {
+                return .cloudModel
+            }
+            return .localFunASR
+        }
+        set {
+            defaults.set(newValue.rawValue, forKey: "transcription_engine")
+            NotificationCenter.default.post(name: Self.engineDidChangeNotification, object: nil)
+            NotificationCenter.default.post(name: Self.settingsDidChangeNotification, object: nil)
+        }
+    }
+    /// 选定的云端语音转写专用模型 ID（若为空则跟随通用模型）
+    var cloudTranscriptionModelId: String {
+        get {
+            defaults.string(forKey: "cloud_transcription_model_id") ?? ""
+        }
+        set {
+            defaults.set(newValue, forKey: "cloud_transcription_model_id")
+        }
+    }
+    /// 是否启用调试模式（会议中显示调试按钮）
+    var showDebug: Bool {
+        get { defaults.object(forKey: "show_debug") as? Bool ?? false }
+        set { defaults.set(newValue, forKey: "show_debug") }
     }
     
     // MARK: - 数据存储路径
@@ -224,11 +298,212 @@ final class SettingsManager {
         modelDownloadStates.first { $0.value.isDownloading }?.key ?? ""
     }
     
-    /// 模型是否已下载可用
-    var isModelAvailable: Bool {
-        return isFunASROfflineAvailable
+    /// 当前选中的转写引擎是否已准备就绪可用
+    var isCurrentEngineReady: Bool {
+        switch transcriptionEngine {
+        case .localFunASR:
+            return isFunASROfflineAvailable
+        case .cloudModel:
+            return TranscriptionEngineCoordinator.shared.isCloudTranscriptionReady
+        }
     }
-    
+
+    /// 模型是否已就绪可用（兼容旧属性，根据当前激活的转写引擎返回对应可用状态）
+    var isModelAvailable: Bool {
+        return isCurrentEngineReady
+    }
+
+    // MARK: - fp32 模型下载
+
+    static let fp32ModelURL = "https://huggingface.co/csukuangfj/sherpa-onnx-paraformer-zh-2024-03-09/resolve/main/model.onnx"
+    static let fp32ModelMirrorURL = "https://hf-mirror.com/csukuangfj/sherpa-onnx-paraformer-zh-2024-03-09/resolve/main/model.onnx"
+
+    var fp32DownloadProgress: Double = 0
+    var isFp32Downloading: Bool = false
+    var fp32DownloadError: String? = nil
+
+    @ObservationIgnored
+    private var fp32DownloadSession: URLSession?
+    @ObservationIgnored
+    private var fp32DownloadRetryURLs: [String] = []
+
+    func startFp32Download(useMirror: Bool = true) {
+        guard !isFp32Downloading else { return }
+        isFp32Downloading = true
+        fp32DownloadProgress = 0
+        fp32DownloadError = nil
+
+        let primary = useMirror ? Self.fp32ModelMirrorURL : Self.fp32ModelURL
+        let fallback = useMirror ? Self.fp32ModelURL : Self.fp32ModelMirrorURL
+        fp32DownloadRetryURLs = [primary, fallback]
+
+        prepareFp32Destination()
+        tryNextFp32Download()
+    }
+
+    private func prepareFp32Destination() {
+        let destinationDir = modelPath + "/models/funasr/" + Self.paraformerModelName
+        do {
+            try FileManager.default.createDirectory(atPath: destinationDir, withIntermediateDirectories: true, attributes: nil)
+            let bundleTokens = funasrBundleBase + "/" + Self.paraformerModelName + "/tokens.txt"
+            if FileManager.default.fileExists(atPath: bundleTokens) {
+                let destTokens = destinationDir + "/tokens.txt"
+                if !FileManager.default.fileExists(atPath: destTokens) {
+                    try FileManager.default.copyItem(atPath: bundleTokens, toPath: destTokens)
+                }
+            }
+        } catch {
+            AppLog.error("[Fp32DL] Failed to prepare directory: \(error)")
+            fp32DownloadError = error.localizedDescription
+            isFp32Downloading = false
+            fp32DownloadRetryURLs = []
+        }
+    }
+
+    private func tryNextFp32Download() {
+        guard let urlString = fp32DownloadRetryURLs.first else {
+            isFp32Downloading = false
+            NotificationCenter.default.post(name: Self.downloadStateDidChangeNotification, object: nil)
+            return
+        }
+        fp32DownloadRetryURLs.removeFirst()
+
+        guard let url = URL(string: urlString) else {
+            tryNextFp32Download()
+            return
+        }
+
+        let destinationDir = modelPath + "/models/funasr/" + Self.paraformerModelName
+        let destinationFile = destinationDir + "/model.onnx"
+        let destinationURL = URL(fileURLWithPath: destinationFile)
+
+        let session = URLSession(
+            configuration: .default,
+            delegate: Fp32DownloadDelegate(
+                destinationURL: destinationURL,
+                onProgress: { [weak self] p in
+                    DispatchQueue.main.async {
+                        self?.fp32DownloadProgress = p
+                    }
+                },
+                onComplete: { [weak self] result in
+                    DispatchQueue.main.async {
+                        switch result {
+                        case .success:
+                            self?.fp32DownloadProgress = 1.0
+                            self?.isFp32Downloading = false
+                            self?.fp32DownloadError = nil
+                            self?.fp32DownloadRetryURLs = []
+                            AppLog.info("[Fp32DL] Download completed, reloading model...")
+                            self?.reloadFunASRModel()
+                            NotificationCenter.default.post(name: Self.settingsDidChangeNotification, object: nil)
+                        case .failure(let error):
+                            AppLog.error("[Fp32DL] Download failed from \(urlString): \(error), retries left: \(self?.fp32DownloadRetryURLs.count ?? 0)")
+                            if self?.fp32DownloadRetryURLs.isEmpty == false {
+                                self?.fp32DownloadProgress = 0
+                                self?.tryNextFp32Download()
+                            } else {
+                                self?.fp32DownloadError = error.localizedDescription
+                                self?.isFp32Downloading = false
+                            }
+                        }
+                        NotificationCenter.default.post(name: Self.downloadStateDidChangeNotification, object: nil)
+                    }
+                }
+            ),
+            delegateQueue: nil
+        )
+        fp32DownloadSession = session
+        let task = session.downloadTask(with: url)
+        task.resume()
+        AppLog.info("[Fp32DL] Starting download from \(urlString)")
+    }
+
+    func cancelFp32Download() {
+        fp32DownloadSession?.invalidateAndCancel()
+        fp32DownloadSession = nil
+        isFp32Downloading = false
+        fp32DownloadProgress = 0
+        fp32DownloadError = nil
+        fp32DownloadRetryURLs = []
+        NotificationCenter.default.post(name: Self.downloadStateDidChangeNotification, object: nil)
+    }
+
+    func removeFp32Model() {
+        let dir = modelPath + "/models/funasr/" + Self.paraformerModelName
+        let fp32File = dir + "/model.onnx"
+        if FileManager.default.fileExists(atPath: fp32File) {
+            try? FileManager.default.removeItem(atPath: fp32File)
+            AppLog.info("[Fp32DL] Removed fp32 model, reloading...")
+        }
+        let tokensFile = dir + "/tokens.txt"
+        let int8File = dir + "/model.int8.onnx"
+        if FileManager.default.fileExists(atPath: tokensFile),
+           !FileManager.default.fileExists(atPath: int8File) {
+            try? FileManager.default.removeItem(atPath: tokensFile)
+        }
+        reloadFunASRModel()
+        NotificationCenter.default.post(name: Self.settingsDidChangeNotification, object: nil)
+    }
+
+    /// 彻底清理本地所有已下载的 ASR 离线模型文件（释放磁盘空间，重置本地状态）
+    func removeAllLocalASRModels() {
+        let fm = FileManager.default
+        let funasrRoot = modelPath + "/models/funasr"
+        if fm.fileExists(atPath: funasrRoot) {
+            try? fm.removeItem(atPath: funasrRoot)
+            AppLog.info("[Settings] Removed all local FunASR models from \(funasrRoot)")
+        }
+        let whisperkitRoot = modelPath + "/models/argmaxinc"
+        if fm.fileExists(atPath: whisperkitRoot) {
+            try? fm.removeItem(atPath: whisperkitRoot)
+            AppLog.info("[Settings] Removed all local WhisperKit models from \(whisperkitRoot)")
+        }
+        modelDownloadStates = [:]
+        // 清理本地模型后，自动将首选引擎切换为云端大模型
+        self.transcriptionEngine = .cloudModel
+        Task {
+            await FunASRService.shared.reset()
+        }
+        NotificationCenter.default.post(name: Self.localModelStatusDidChangeNotification, object: nil)
+        NotificationCenter.default.post(name: Self.engineDidChangeNotification, object: nil)
+        NotificationCenter.default.post(name: Self.settingsDidChangeNotification, object: nil)
+    }
+
+    /// 获取本地已下载模型总大小字符串（如 "235.4 MB" 或 "0 MB"）
+    var localModelsDiskUsageString: String {
+        let fm = FileManager.default
+        let modelsDir = modelPath + "/models"
+        guard let enumerator = fm.enumerator(atPath: modelsDir) else { return "0 MB" }
+        var totalBytes: Int64 = 0
+        while let element = enumerator.nextObject() as? String {
+            let fullPath = modelsDir + "/" + element
+            if let attrs = try? fm.attributesOfItem(atPath: fullPath),
+               let size = attrs[.size] as? Int64 {
+                totalBytes += size
+            }
+        }
+        let mb = Double(totalBytes) / (1024.0 * 1024.0)
+        if mb >= 1024.0 {
+            return String(format: "%.2f GB", mb / 1024.0)
+        } else {
+            return String(format: "%.1f MB", mb)
+        }
+    }
+
+    /// 下载或删除 fp32 模型后，异步重载 FunASR 引擎
+    private func reloadFunASRModel() {
+        let newDir = funasrOfflineModelDir
+        Task {
+            do {
+                try await FunASRService.shared.initializeOffline(modelDir: newDir)
+                AppLog.info("[Fp32DL] FunASR reloaded with precision: \(self.activeModelPrecision)")
+            } catch {
+                AppLog.error("[Fp32DL] FunASR reload failed: \(error)")
+            }
+        }
+    }
+
     var modelVersion = "" {
         didSet { if !modelVersion.isEmpty { defaults.set(modelVersion, forKey: "current_model_version") } }
     }
@@ -249,7 +524,7 @@ final class SettingsManager {
     }
     
     var isLLMConfigured: Bool {
-        return !llmURL.isEmpty && !llmToken.isEmpty
+        return (!llmURL.isEmpty && !llmToken.isEmpty) || CloudModelManager.shared.isCurrentModelConfigured
     }
     
     /// 标记是否已完成首次启动时的文件系统同步（仅首次 load 时执行清理）
@@ -377,5 +652,48 @@ final class SettingsManager {
     
     private func getSystemLanguage() -> String {
         return Locale.preferredLanguages.first ?? "zh-Hans"
+    }
+}
+
+// MARK: - fp32 模型下载代理
+
+private final class Fp32DownloadDelegate: NSObject, URLSessionDownloadDelegate {
+    let destinationURL: URL
+    let onProgress: (Double) -> Void
+    let onComplete: (Result<URL, Error>) -> Void
+    private var didFinish = false
+
+    init(destinationURL: URL, onProgress: @escaping (Double) -> Void, onComplete: @escaping (Result<URL, Error>) -> Void) {
+        self.destinationURL = destinationURL
+        self.onProgress = onProgress
+        self.onComplete = onComplete
+    }
+
+    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
+                    didWriteData bytesWritten: Int64, totalBytesWritten: Int64,
+                    totalBytesExpectedToWrite: Int64) {
+        guard totalBytesExpectedToWrite > 0 else { return }
+        onProgress(Double(totalBytesWritten) / Double(totalBytesExpectedToWrite))
+    }
+
+    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
+                    didFinishDownloadingTo location: URL) {
+        didFinish = true
+        do {
+            if FileManager.default.fileExists(atPath: destinationURL.path) {
+                try FileManager.default.removeItem(at: destinationURL)
+            }
+            try FileManager.default.moveItem(at: location, to: destinationURL)
+            onComplete(.success(destinationURL))
+        } catch {
+            onComplete(.failure(error))
+        }
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask,
+                    didCompleteWithError error: Error?) {
+        if let error = error, !didFinish {
+            onComplete(.failure(error))
+        }
     }
 }
