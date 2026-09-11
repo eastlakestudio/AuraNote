@@ -902,6 +902,13 @@ struct SettingsView: View {
             settings.load()
             loadCurrentModelSettings()
         }
+        .onDisappear {
+            let currentModel = cloudModelManager.selectedModel
+            let trimmed = inputApiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                cloudModelManager.saveApiKey(trimmed, for: currentModel.id)
+            }
+        }
         .navigationTitle(loc("settings"))
     }
 
@@ -1128,6 +1135,10 @@ struct SettingsView: View {
                 Picker("", selection: Binding(
                     get: { cloudModelManager.selectedModelId },
                     set: { newId in
+                        let curId = cloudModelManager.selectedModel.id
+                        if !inputApiKey.isEmpty {
+                            cloudModelManager.saveApiKey(inputApiKey, for: curId)
+                        }
                         cloudModelManager.selectedModelId = newId
                         loadCurrentModelSettings()
                     }
@@ -1187,8 +1198,8 @@ struct SettingsView: View {
                 Spacer()
             }
 
-            // 网络代理配置
-            VStack(alignment: .leading, spacing: 6) {
+            // 网络代理配置（常驻展示，支持一键填入与自动开启）
+            VStack(alignment: .leading, spacing: 8) {
                 HStack(alignment: .center, spacing: 12) {
                     Text(loc("proxy_setting_title"))
                         .font(.subheadline)
@@ -1199,71 +1210,88 @@ struct SettingsView: View {
                         .toggleStyle(.checkbox)
                         .controlSize(.small)
 
-                    if settings.isCustomProxyEnabled {
-                        TextField(loc("proxy_placeholder"), text: $settings.customProxyURL)
-                            .textFieldStyle(.roundedBorder)
-                            .font(.system(.caption, design: .monospaced))
-                            .frame(maxWidth: 260)
-
-                        Button {
-                            testProxy()
-                        } label: {
-                            if isTestingProxy {
-                                ProgressView().controlSize(.small)
-                            } else {
-                                Text(loc("proxy_test_button"))
+                    TextField(loc("proxy_placeholder"), text: $settings.customProxyURL)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(.caption, design: .monospaced))
+                        .frame(maxWidth: 240)
+                        .onChange(of: settings.customProxyURL) { _, newURL in
+                            if !newURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !settings.isCustomProxyEnabled {
+                                settings.isCustomProxyEnabled = true
                             }
                         }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                        .disabled(isTestingProxy || settings.customProxyURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                    Button {
+                        testProxy()
+                    } label: {
+                        if isTestingProxy {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Text(loc("proxy_test_button"))
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(isTestingProxy || settings.customProxyURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                    // 状态微标
+                    if settings.isCustomProxyEnabled {
+                        Text("已启用")
+                            .font(.caption2)
+                            .foregroundStyle(.green)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.green.opacity(0.12))
+                            .clipShape(Capsule())
+                    } else {
+                        Text("跟随系统 / 直连")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
                     }
 
                     Spacer()
                 }
 
-                if settings.isCustomProxyEnabled {
-                    // 常用端口预设
-                    HStack(spacing: 8) {
-                        Text(loc("proxy_presets_label"))
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .frame(width: labelWidth, alignment: .leading)
+                // 常用端口预设（始终常驻展示）
+                HStack(spacing: 8) {
+                    Text(loc("proxy_presets_label"))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .frame(width: labelWidth, alignment: .leading)
 
-                        ForEach([
-                            ("Clash (7890)", "http://127.0.0.1:7890"),
-                            ("Surge (6152)", "http://127.0.0.1:6152"),
-                            ("V2Ray (10808)", "http://127.0.0.1:10808"),
-                            ("SOCKS5 (7890)", "socks5://127.0.0.1:7890")
-                        ], id: \.0) { presetName, presetValue in
-                            Button {
-                                settings.customProxyURL = presetValue
-                                proxyTestMessage = nil
-                                proxyTestSuccess = nil
-                            } label: {
-                                Text(presetName)
-                                    .font(.caption2)
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 3)
-                                    .background(settings.customProxyURL == presetValue ? Color.purple.opacity(0.15) : Color.secondary.opacity(0.08))
-                                    .foregroundStyle(settings.customProxyURL == presetValue ? Color.purple : Color.secondary)
-                                    .clipShape(RoundedRectangle(cornerRadius: 4))
-                            }
-                            .buttonStyle(.plain)
+                    ForEach([
+                        ("Clash (7890)", "http://127.0.0.1:7890"),
+                        ("Surge (6152)", "http://127.0.0.1:6152"),
+                        ("V2Ray (10808)", "http://127.0.0.1:10808"),
+                        ("SOCKS5 (7890)", "socks5://127.0.0.1:7890")
+                    ], id: \.0) { presetName, presetValue in
+                        Button {
+                            settings.customProxyURL = presetValue
+                            settings.isCustomProxyEnabled = true
+                            proxyTestMessage = nil
+                            proxyTestSuccess = nil
+                        } label: {
+                            Text(presetName)
+                                .font(.caption2)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 3)
+                                .background(settings.isCustomProxyEnabled && settings.customProxyURL == presetValue ? Color.purple.opacity(0.2) : Color.secondary.opacity(0.1))
+                                .foregroundStyle(settings.isCustomProxyEnabled && settings.customProxyURL == presetValue ? Color.purple : Color.secondary)
+                                .clipShape(RoundedRectangle(cornerRadius: 4))
                         }
+                        .buttonStyle(.plain)
                     }
+                }
 
-                    // 代理测试结果提示
-                    if let success = proxyTestSuccess, let msg = proxyTestMessage {
-                        HStack(spacing: 6) {
-                            Image(systemName: success ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
-                                .foregroundStyle(success ? .green : .red)
-                            Text(msg)
-                                .font(.caption)
-                                .foregroundStyle(success ? .green : .red)
-                        }
-                        .padding(.leading, labelWidth + 12)
+                // 代理测试结果提示
+                if let success = proxyTestSuccess, let msg = proxyTestMessage {
+                    HStack(spacing: 6) {
+                        Image(systemName: success ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
+                            .foregroundStyle(success ? .green : .red)
+                        Text(msg)
+                            .font(.caption)
+                            .foregroundStyle(success ? .green : .red)
                     }
+                    .padding(.leading, labelWidth + 12)
                 }
             }
 
@@ -1279,10 +1307,22 @@ struct SettingsView: View {
                         TextField(loc("cloud_api_key_placeholder"), text: $inputApiKey)
                             .textFieldStyle(.roundedBorder)
                             .font(.system(.caption, design: .monospaced))
+                            .onChange(of: inputApiKey) { _, newValue in
+                                cloudModelManager.saveApiKey(newValue, for: currentModel.id)
+                            }
+                            .onSubmit {
+                                cloudModelManager.saveApiKey(inputApiKey, for: currentModel.id)
+                            }
                     } else {
                         SecureField(loc("cloud_api_key_placeholder"), text: $inputApiKey)
                             .textFieldStyle(.roundedBorder)
                             .font(.system(.caption, design: .monospaced))
+                            .onChange(of: inputApiKey) { _, newValue in
+                                cloudModelManager.saveApiKey(newValue, for: currentModel.id)
+                            }
+                            .onSubmit {
+                                cloudModelManager.saveApiKey(inputApiKey, for: currentModel.id)
+                            }
                     }
 
                     Button {
@@ -1471,6 +1511,9 @@ struct SettingsView: View {
         let key = inputApiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !key.isEmpty else { return }
 
+        // 自动保存至持久化层
+        cloudModelManager.saveApiKey(key, for: currentModel.id)
+
         isTestingConnection = true
         connectionTestMessage = nil
         connectionTestSuccess = nil
@@ -1497,6 +1540,9 @@ struct SettingsView: View {
         let currentModel = cloudModelManager.selectedModel
         let key = inputApiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !key.isEmpty else { return }
+
+        // 自动保存至持久化层
+        cloudModelManager.saveApiKey(key, for: currentModel.id)
 
         isTestingAudioTranscription = true
         audioTestMessage = nil

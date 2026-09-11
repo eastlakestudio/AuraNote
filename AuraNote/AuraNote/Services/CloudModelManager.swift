@@ -17,6 +17,7 @@ final class CloudModelManager {
     var selectedModelId: String = "" {
         didSet {
             defaults.set(selectedModelId, forKey: "cloud_selected_model_id")
+            defaults.synchronize()
             NotificationCenter.default.post(name: Self.modelSelectionDidChangeNotification, object: nil)
         }
     }
