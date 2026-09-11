@@ -366,6 +366,7 @@ final class CloudTranscriptionTests: XCTestCase {
         """
         MockTranscriptionURLProtocol.mockContent = jsonResponse
         MockTranscriptionURLProtocol.responseStatusCodes = []
+        MockTranscriptionURLProtocol.mockErrors = []
         MockTranscriptionURLProtocol.requestCount = 0
 
         let mockSession = URLSession(configuration: mockSessionConfig(MockTranscriptionURLProtocol.self))
@@ -381,8 +382,8 @@ final class CloudTranscriptionTests: XCTestCase {
             audioEndpointType: .chatAudio
         )
 
-        // 100 秒长音频（> 60 秒，50 秒窗口划分为 2 个大窗口）
-        let samples = [Float](repeating: 0.05, count: 100 * 16000)
+        // 90 秒长音频（> 60 秒，默认 30 秒窗口划分为 3 个大窗口）
+        let samples = [Float](repeating: 0.05, count: 90 * 16000)
         var progressUpdates = 0
 
         let segments = try await service.transcribeOfflineAudio(
@@ -391,21 +392,56 @@ final class CloudTranscriptionTests: XCTestCase {
             meetingId: "test_meeting_long",
             model: model,
             apiKey: "mock-key",
-            windowDurationSeconds: 50.0,
+            windowDurationSeconds: 30.0,
             pacingDelaySeconds: 0.01,
             onProgress: { p, _, _ in
                 progressUpdates += 1
             }
         )
 
-        // 100 秒切分为 2 个 50 秒宏观窗口，共 2 次请求
-        XCTAssertEqual(MockTranscriptionURLProtocol.requestCount, 2)
-        XCTAssertEqual(segments.count, 2)
+        // 90 秒切分为 3 个 30 秒宏观窗口，共 3 次请求
+        XCTAssertEqual(MockTranscriptionURLProtocol.requestCount, 3)
+        XCTAssertEqual(segments.count, 3)
         XCTAssertEqual(segments[0].startTime, 0.0)
-        XCTAssertEqual(segments[0].endTime, 50.0)
-        XCTAssertEqual(segments[1].startTime, 50.0)
-        XCTAssertEqual(segments[1].endTime, 100.0)
-        XCTAssertGreaterThanOrEqual(progressUpdates, 2)
+        XCTAssertEqual(segments[0].endTime, 30.0)
+        XCTAssertEqual(segments[1].startTime, 30.0)
+        XCTAssertEqual(segments[1].endTime, 60.0)
+        XCTAssertEqual(segments[2].startTime, 60.0)
+        XCTAssertEqual(segments[2].endTime, 90.0)
+        XCTAssertGreaterThanOrEqual(progressUpdates, 3)
+    }
+
+    func testNetworkTimeoutRetryAndRecovery() async throws {
+        MockTranscriptionURLProtocol.mockContent = "超时重试后成功输出的文本。"
+        MockTranscriptionURLProtocol.responseStatusCodes = []
+        // 第 1 次抛出 timedOut 瞬态网络异常，第 2 次成功响应
+        MockTranscriptionURLProtocol.mockErrors = [URLError(.timedOut)]
+        MockTranscriptionURLProtocol.requestCount = 0
+
+        let mockSession = URLSession(configuration: mockSessionConfig(MockTranscriptionURLProtocol.self))
+        let service = CloudTranscriptionService(session: mockSession)
+        await service.setRetryDelay(0.01)
+
+        let model = CloudModel(
+            id: "gemini-transcribe",
+            name: "Google Gemini 3.5 Transcribe",
+            provider: "Google",
+            apiURL: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+            modelName: "gemini-2.5-flash",
+            supportsAudio: true,
+            audioEndpointType: .chatAudio
+        )
+
+        let result = try await service.transcribeSamples(
+            samples: [Float](repeating: 0.05, count: 3200),
+            sampleRate: 16000,
+            hotwords: "",
+            model: model,
+            apiKey: "mock-key"
+        )
+
+        XCTAssertEqual(result, "超时重试后成功输出的文本。")
+        XCTAssertEqual(MockTranscriptionURLProtocol.requestCount, 2)
     }
 
     func testHttp429ExponentialBackoffRetry() async throws {
@@ -504,6 +540,7 @@ final class CloudTranscriptionTests: XCTestCase {
 final class MockTranscriptionURLProtocol: URLProtocol {
     nonisolated(unsafe) static var mockContent: String = "大家好，今天我们进行季度项目复盘评审。"
     nonisolated(unsafe) static var responseStatusCodes: [Int] = []
+    nonisolated(unsafe) static var mockErrors: [URLError] = []
     nonisolated(unsafe) static var requestCount: Int = 0
 
     override class func canInit(with request: URLRequest) -> Bool {
@@ -516,6 +553,13 @@ final class MockTranscriptionURLProtocol: URLProtocol {
 
     override func startLoading() {
         MockTranscriptionURLProtocol.requestCount += 1
+
+        if !MockTranscriptionURLProtocol.mockErrors.isEmpty {
+            let error = MockTranscriptionURLProtocol.mockErrors.removeFirst()
+            client?.urlProtocol(self, didFailWithError: error)
+            return
+        }
+
         let statusCode: Int
         if !MockTranscriptionURLProtocol.responseStatusCodes.isEmpty {
             statusCode = MockTranscriptionURLProtocol.responseStatusCodes.removeFirst()

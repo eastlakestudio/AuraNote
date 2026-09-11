@@ -8,6 +8,7 @@ final class SettingsManager {
     static let downloadStateDidChangeNotification = Notification.Name("AuraNoteDownloadStateDidChange")
     static let engineDidChangeNotification = Notification.Name("AuraNoteEngineDidChange")
     static let localModelStatusDidChangeNotification = Notification.Name("AuraNoteLocalModelStatusDidChange")
+    static let proxyDidChangeNotification = Notification.Name("AuraNoteProxyDidChange")
     
     var defaults: UserDefaults = .standard
     
@@ -247,6 +248,36 @@ final class SettingsManager {
     var showDebug: Bool {
         get { defaults.object(forKey: "show_debug") as? Bool ?? false }
         set { defaults.set(newValue, forKey: "show_debug") }
+    }
+
+    // MARK: - 网络代理设置
+
+    /// 是否启用自定义网络代理
+    var isCustomProxyEnabled: Bool {
+        get { defaults.bool(forKey: "network_custom_proxy_enabled") }
+        set {
+            defaults.set(newValue, forKey: "network_custom_proxy_enabled")
+            NotificationCenter.default.post(name: Self.proxyDidChangeNotification, object: nil)
+            NotificationCenter.default.post(name: Self.settingsDidChangeNotification, object: nil)
+            Task {
+                await CloudTranscriptionService.shared.reloadSession()
+                CloudLLMService.shared.reloadSession()
+            }
+        }
+    }
+
+    /// 自定义网络代理地址（如 http://127.0.0.1:7890、socks5://127.0.0.1:7890）
+    var customProxyURL: String {
+        get { defaults.string(forKey: "network_custom_proxy_url") ?? "http://127.0.0.1:7890" }
+        set {
+            defaults.set(newValue, forKey: "network_custom_proxy_url")
+            NotificationCenter.default.post(name: Self.proxyDidChangeNotification, object: nil)
+            NotificationCenter.default.post(name: Self.settingsDidChangeNotification, object: nil)
+            Task {
+                await CloudTranscriptionService.shared.reloadSession()
+                CloudLLMService.shared.reloadSession()
+            }
+        }
     }
     
     // MARK: - 数据存储路径

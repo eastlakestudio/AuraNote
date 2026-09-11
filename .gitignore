@@ -29,3 +29,7 @@ AuraNote/build_output/
 AuraNote/Libraries/sherpa-onnx/
 build_output/
 AuraNote/build.log
+.DS_Store
+*/.DS_Store
+.build/
+AuraNote/auranote-cloud-debug

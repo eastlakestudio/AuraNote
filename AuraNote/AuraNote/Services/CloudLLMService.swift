@@ -40,12 +40,38 @@ enum CloudLLMError: LocalizedError {
 final class CloudLLMService {
     static let shared = CloudLLMService()
 
-    private let urlSession: URLSession
+    private var urlSession: URLSession
+    private let isCustomSession: Bool
 
-    private init() {
+    init(session: URLSession? = nil) {
+        if let s = session {
+            self.urlSession = s
+            self.isCustomSession = true
+        } else {
+            self.isCustomSession = false
+            let config = URLSessionConfiguration.default
+            config.timeoutIntervalForRequest = 60
+            config.timeoutIntervalForResource = 120
+            NetworkProxyManager.shared.applyProxy(
+                to: config,
+                proxyString: SettingsManager.shared.customProxyURL,
+                isEnabled: SettingsManager.shared.isCustomProxyEnabled
+            )
+            self.urlSession = URLSession(configuration: config)
+        }
+    }
+
+    /// 热重载会话配置（应用代理变更）
+    func reloadSession() {
+        guard !isCustomSession else { return }
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 60
         config.timeoutIntervalForResource = 120
+        NetworkProxyManager.shared.applyProxy(
+            to: config,
+            proxyString: SettingsManager.shared.customProxyURL,
+            isEnabled: SettingsManager.shared.isCustomProxyEnabled
+        )
         self.urlSession = URLSession(configuration: config)
     }
 

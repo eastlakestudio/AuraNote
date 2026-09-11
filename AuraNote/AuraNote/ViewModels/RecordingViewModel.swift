@@ -1113,19 +1113,24 @@ final class RecordingViewModel {
                     self.safeUpdateStatus(id: meetingId, status: .pendingDiarization)
                 }
             } catch {
+                let activeEngine = chosenEngine ?? SettingsManager.shared.transcriptionEngine
+                let isCloudActive = (activeEngine == .cloudModel) && (TranscriptionEngineCoordinator.shared.getActiveCloudTranscriptionModel() != nil)
+                let errorTitle = isCloudActive ? "云端语音转写失败\n请检查网络连接、网络代理或 API-KEY 配置" : loc("err_offline_transcribe_failed")
+
                 // 如果消费者已收到回调产出的段，不算完全失败
                 let existingCount = await MainActor.run { self.transcriptSegments.count }
                 if existingCount > 0 {
-                    AppLog.warn("Offline transcription timed out but has \(existingCount) existing segments, using partial results")
+                    AppLog.warn("Offline transcription encountered error but has \(existingCount) existing segments, using partial results")
                     await MainActor.run {
                         self.saveSegmentsToDatabase(meetingId: meetingId)
                         let allLabeled = self.transcriptSegments.filter { $0.isFinal }.allSatisfy { !$0.speakerLabel.isEmpty && $0.speakerLabel != "?" }
                         self.safeUpdateStatus(id: meetingId, status: allLabeled ? .completed : .pendingDiarization)
+                        self.errorAlert = "\(errorTitle)\n\n\(error.localizedDescription)\n\n(已自动保留前 \(existingCount) 句已转写的文本内容)"
                     }
                 } else {
                     AppLog.error("Offline transcription failed: \(error.localizedDescription)")
                     await MainActor.run {
-                        self.errorAlert = "\(loc("err_offline_transcribe_failed"))\n\n\(error.localizedDescription)"
+                        self.errorAlert = "\(errorTitle)\n\n\(error.localizedDescription)"
                         self.saveSegmentsToDatabase(meetingId: meetingId)
                         self.safeUpdateStatus(id: meetingId, status: .pendingDiarization)
                     }

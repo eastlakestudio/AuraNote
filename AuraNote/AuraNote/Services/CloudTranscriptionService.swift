@@ -52,12 +52,41 @@ struct CloudDiarizedSentence: Codable, Equatable {
 actor CloudTranscriptionService {
     static let shared = CloudTranscriptionService()
 
-    private let session: URLSession
+    private var session: URLSession
+    private let isCustomSession: Bool
     /// 429 初始重试延迟（秒），测试环境可设为小值以加速执行
     var retryDelay: Double = 2.0
 
-    init(session: URLSession = .shared) {
-        self.session = session
+    init(session: URLSession? = nil) {
+        if let s = session {
+            self.session = s
+            self.isCustomSession = true
+        } else {
+            self.isCustomSession = false
+            let config = URLSessionConfiguration.default
+            config.timeoutIntervalForRequest = 180
+            config.timeoutIntervalForResource = 300
+            NetworkProxyManager.shared.applyProxy(
+                to: config,
+                proxyString: SettingsManager.shared.customProxyURL,
+                isEnabled: SettingsManager.shared.isCustomProxyEnabled
+            )
+            self.session = URLSession(configuration: config)
+        }
+    }
+
+    /// 热重载 URLSession 配置（如应用自定义代理变动）
+    func reloadSession() {
+        guard !isCustomSession else { return }
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 180
+        config.timeoutIntervalForResource = 300
+        NetworkProxyManager.shared.applyProxy(
+            to: config,
+            proxyString: SettingsManager.shared.customProxyURL,
+            isEnabled: SettingsManager.shared.isCustomProxyEnabled
+        )
+        self.session = URLSession(configuration: config)
     }
 
     /// 设置重试延迟（主要供单元测试使用）
@@ -180,7 +209,7 @@ actor CloudTranscriptionService {
     ///   - contextSpeakers: 已知参会人/说话人名单
     ///   - model: 云端大模型配置
     ///   - apiKey: API Key
-    ///   - windowDurationSeconds: 宏观大窗口时长（默认 50 秒）
+    ///   - windowDurationSeconds: 宏观大窗口时长（默认 30 秒，降低包体大小与云端推理等待时间）
     ///   - pacingDelaySeconds: 请求间安全节流延迟（默认 1.0 秒，控制在 10 RPM 以内，防止突破 15 RPM 限制）
     ///   - onProgress: 进度回调 (progress, processedSeconds, totalSeconds)
     ///   - onSegmentsChunk: 批次生成段时的回调（用于实时推送到 UI）
@@ -192,7 +221,7 @@ actor CloudTranscriptionService {
         contextSpeakers: [String] = [],
         model: CloudModel,
         apiKey: String,
-        windowDurationSeconds: Double = 50.0,
+        windowDurationSeconds: Double = 30.0,
         pacingDelaySeconds: Double = 1.0,
         onProgress: (@Sendable (Double, Double, Double) async -> Void)? = nil,
         onSegmentsChunk: (@Sendable ([TranscriptSegment]) async -> Void)? = nil
@@ -244,7 +273,7 @@ actor CloudTranscriptionService {
             return segments
         }
 
-        // 场景 2：长音频（> 60 秒），采用 50 秒宏观大窗口切分，逐步渐进式处理并加节流
+        // 场景 2：长音频（> 60 秒），采用 30 秒宏观大窗口切分，逐步渐进式处理并加节流
         let windowSamples = max(sampleRate, Int(windowDurationSeconds * Double(sampleRate)))
         let totalWindows = Int(ceil(Double(samples.count) / Double(windowSamples)))
         AppLog.info("[CloudASR] Long audio (\(String(format: "%.1f", totalDuration))s): partitioned into \(totalWindows) macro-windows (\(windowDurationSeconds)s each)")
@@ -372,7 +401,7 @@ actor CloudTranscriptionService {
 
     // MARK: - 协议一：多模态 Chat Completions (input_audio)
 
-    /// 带指数退避的通用 HTTP 执行方法（针对 HTTP 429 自动等待并重试最多 3 次）
+    /// 带指数退避的通用 HTTP 执行方法（针对 HTTP 429 限流与网络超时等瞬态错误自动等待并重试最多 3 次）
     private func executeWithRetry(
         request: URLRequest,
         maxRetries: Int = 3,
@@ -387,6 +416,27 @@ actor CloudTranscriptionService {
                 (data, response) = try await session.data(for: request)
             } catch {
                 if Task.isCancelled { throw CancellationError() }
+
+                // 判断是否为可重试的瞬态网络错误（如请求超时、连接中断、无法连接等）
+                let isRetryable: Bool
+                if let urlError = error as? URLError {
+                    switch urlError.code {
+                    case .timedOut, .networkConnectionLost, .notConnectedToInternet, .cannotConnectToHost, .dnsLookupFailed:
+                        isRetryable = true
+                    default:
+                        isRetryable = false
+                    }
+                } else {
+                    isRetryable = false
+                }
+
+                if isRetryable && attempt < maxRetries {
+                    AppLog.warn("[CloudTranscription] Network transient error '\(error.localizedDescription)' (attempt \(attempt + 1)/\(maxRetries)). Waiting \(String(format: "%.1f", currentDelay))s before retrying...")
+                    try? await Task.sleep(nanoseconds: UInt64(currentDelay * 1_000_000_000))
+                    currentDelay *= 2.0
+                    continue
+                }
+
                 throw CloudTranscriptionError.networkError(error.localizedDescription)
             }
 
@@ -428,7 +478,7 @@ actor CloudTranscriptionService {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        request.timeoutInterval = 60
+        request.timeoutInterval = 180
 
         if model.provider.lowercased().contains("openrouter") || model.apiURL.contains("openrouter.ai") {
             request.setValue("https://github.com/EastlakeStudio/AuraNote", forHTTPHeaderField: "HTTP-Referer")
@@ -501,7 +551,7 @@ actor CloudTranscriptionService {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        request.timeoutInterval = 60
+        request.timeoutInterval = 180
 
         let boundary = "Boundary-\(UUID().uuidString)"
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
@@ -607,7 +657,7 @@ actor CloudTranscriptionService {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        request.timeoutInterval = 60
+        request.timeoutInterval = 180
 
         if model.provider.lowercased().contains("openrouter") || model.apiURL.contains("openrouter.ai") {
             request.setValue("https://github.com/EastlakeStudio/AuraNote", forHTTPHeaderField: "HTTP-Referer")

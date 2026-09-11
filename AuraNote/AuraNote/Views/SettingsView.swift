@@ -395,6 +395,11 @@ let zhLocale: [String: String] = [
     "cloud_testing": "连接测试中...",
     "cloud_test_success": "连接成功",
     "cloud_test_failed": "连接失败",
+    "proxy_setting_title": "网络代理",
+    "proxy_enable_custom": "自定义代理",
+    "proxy_test_button": "测试代理",
+    "proxy_presets_label": "常用端口预设:",
+    "proxy_placeholder": "如 http://127.0.0.1:7890",
     "cloud_security_tip": "安全性保证：API Key 仅加密存储于本地 Keychain（系统钥匙串），绝不随配置文件或明文存储，亦不记录明文日志。",
     "cloud_prompt_title": "纪要整理提示词",
     "cloud_prompt_zh": "中文提示词",
@@ -787,6 +792,11 @@ let enLocale: [String: String] = [
     "cloud_testing": "Testing connection...",
     "cloud_test_success": "Connected successfully",
     "cloud_test_failed": "Connection failed",
+    "proxy_setting_title": "Network Proxy",
+    "proxy_enable_custom": "Custom Proxy",
+    "proxy_test_button": "Test Proxy",
+    "proxy_presets_label": "Presets:",
+    "proxy_placeholder": "e.g. http://127.0.0.1:7890",
     "cloud_security_tip": "Security Guarantee: API Key is encrypted in local Keychain only, never stored in plaintext config files or plaintext logs.",
     "cloud_prompt_title": "Summary Prompts",
     "cloud_prompt_zh": "Chinese Prompt",
@@ -824,6 +834,9 @@ struct SettingsView: View {
     @State private var audioTestMessage: String? = nil
     @State private var audioTestSuccess: Bool? = nil
     @State private var showConfirmClearLocalModels: Bool = false
+    @State private var isTestingProxy: Bool = false
+    @State private var proxyTestMessage: String? = nil
+    @State private var proxyTestSuccess: Bool? = nil
 
     private let labelWidth: CGFloat = 85
 
@@ -1174,6 +1187,86 @@ struct SettingsView: View {
                 Spacer()
             }
 
+            // 网络代理配置
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .center, spacing: 12) {
+                    Text(loc("proxy_setting_title"))
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                        .frame(width: labelWidth, alignment: .leading)
+
+                    Toggle(loc("proxy_enable_custom"), isOn: $settings.isCustomProxyEnabled)
+                        .toggleStyle(.checkbox)
+                        .controlSize(.small)
+
+                    if settings.isCustomProxyEnabled {
+                        TextField(loc("proxy_placeholder"), text: $settings.customProxyURL)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(.caption, design: .monospaced))
+                            .frame(maxWidth: 260)
+
+                        Button {
+                            testProxy()
+                        } label: {
+                            if isTestingProxy {
+                                ProgressView().controlSize(.small)
+                            } else {
+                                Text(loc("proxy_test_button"))
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .disabled(isTestingProxy || settings.customProxyURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+
+                    Spacer()
+                }
+
+                if settings.isCustomProxyEnabled {
+                    // 常用端口预设
+                    HStack(spacing: 8) {
+                        Text(loc("proxy_presets_label"))
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .frame(width: labelWidth, alignment: .leading)
+
+                        ForEach([
+                            ("Clash (7890)", "http://127.0.0.1:7890"),
+                            ("Surge (6152)", "http://127.0.0.1:6152"),
+                            ("V2Ray (10808)", "http://127.0.0.1:10808"),
+                            ("SOCKS5 (7890)", "socks5://127.0.0.1:7890")
+                        ], id: \.0) { presetName, presetValue in
+                            Button {
+                                settings.customProxyURL = presetValue
+                                proxyTestMessage = nil
+                                proxyTestSuccess = nil
+                            } label: {
+                                Text(presetName)
+                                    .font(.caption2)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 3)
+                                    .background(settings.customProxyURL == presetValue ? Color.purple.opacity(0.15) : Color.secondary.opacity(0.08))
+                                    .foregroundStyle(settings.customProxyURL == presetValue ? Color.purple : Color.secondary)
+                                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+
+                    // 代理测试结果提示
+                    if let success = proxyTestSuccess, let msg = proxyTestMessage {
+                        HStack(spacing: 6) {
+                            Image(systemName: success ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
+                                .foregroundStyle(success ? .green : .red)
+                            Text(msg)
+                                .font(.caption)
+                                .foregroundStyle(success ? .green : .red)
+                        }
+                        .padding(.leading, labelWidth + 12)
+                    }
+                }
+            }
+
             // API-KEY 输入与安全存储操作
             HStack(alignment: .center, spacing: 12) {
                 Text(loc("cloud_api_key_label"))
@@ -1351,6 +1444,26 @@ struct SettingsView: View {
         connectionTestSuccess = nil
         audioTestMessage = nil
         audioTestSuccess = nil
+        proxyTestMessage = nil
+        proxyTestSuccess = nil
+    }
+
+    private func testProxy() {
+        let proxy = settings.customProxyURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !proxy.isEmpty else { return }
+
+        isTestingProxy = true
+        proxyTestMessage = nil
+        proxyTestSuccess = nil
+
+        Task {
+            let result = await NetworkProxyManager.shared.testProxyConnectivity(proxyString: proxy)
+            await MainActor.run {
+                isTestingProxy = false
+                proxyTestSuccess = result.success
+                proxyTestMessage = result.message
+            }
+        }
     }
 
     private func testConnection() {

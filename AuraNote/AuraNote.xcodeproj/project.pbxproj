@@ -54,6 +54,7 @@
 		B51825B6DE5A959AE3773CEE /* CloudLLMService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22EAEC096C5AFF6FAF9A8266 /* CloudLLMService.swift */; };
 		C088DE201C1392595600826B /* NewMeetingSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4959283DB73D45851A7AED37 /* NewMeetingSheet.swift */; };
 		C1D280202EE9461EC4A197DE /* DatabaseManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F77486422B75B139827DA60 /* DatabaseManager.swift */; };
+		CD1F26E422130B227A87327F /* NetworkProxyManagerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A35FFAE4D48EEB22EDAB114B /* NetworkProxyManagerTests.swift */; };
 		D29D2C81C45354250DC21773 /* FunASRService.swift in Sources */ = {isa = PBXBuildFile; fileRef = FC7EEE0647318775BE1CA160 /* FunASRService.swift */; };
 		D5CA84A0D6C169B7C73A6615 /* KeychainHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 35B458292AF298F8EF6DF241 /* KeychainHelper.swift */; };
 		D8C2F993A15E50E50D727052 /* AudioPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E6BCE84C008ECA3C64C198F /* AudioPlayer.swift */; };
@@ -61,6 +62,7 @@
 		E1F0DA09B0BFC8A3FD19F1AD /* SherpaOnnxDiarizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AE27DEE54A2E83E11E3502C /* SherpaOnnxDiarizer.swift */; };
 		E977E7589167FF92F52D4DDC /* HotwordPresetsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33412488D9DC14ABB7FFD6B6 /* HotwordPresetsTests.swift */; };
 		F0E97CB08F47BFACBBF60B7F /* ReviewingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5407127495AA20185E7E659F /* ReviewingView.swift */; };
+		F3A05DB033AC12DA3EDC1448 /* NetworkProxyManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3B8A6F5F16BFE0F9FBDCAF0 /* NetworkProxyManager.swift */; };
 		F58814D5148E07D251F1BE99 /* SettingsManagerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9BFD42D5406878F197B6D168 /* SettingsManagerTests.swift */; };
 /* End PBXBuildFile section */
 
@@ -118,6 +120,7 @@
 		952B04F23E5B9716D14D7DCB /* MeetingListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingListView.swift; sourceTree = "<group>"; };
 		9B3EF6FA3D65F43DE08C8B20 /* hotword_presets.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = hotword_presets.json; sourceTree = "<group>"; };
 		9BFD42D5406878F197B6D168 /* SettingsManagerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsManagerTests.swift; sourceTree = "<group>"; };
+		A35FFAE4D48EEB22EDAB114B /* NetworkProxyManagerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkProxyManagerTests.swift; sourceTree = "<group>"; };
 		A56D2E5EC1CBC73D6FB3C502 /* CloudModelManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudModelManager.swift; sourceTree = "<group>"; };
 		A98FD31FA2CD50211ACAC2CC /* DiarizationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiarizationService.swift; sourceTree = "<group>"; };
 		B4479231F82FFD1F4DB64092 /* SpeakerMatcherTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeakerMatcherTests.swift; sourceTree = "<group>"; };
@@ -127,6 +130,7 @@
 		CCFC80FF72DB092E6E0CBF79 /* SpeakerMatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeakerMatcher.swift; sourceTree = "<group>"; };
 		CD4CB2A5248F793C5417C495 /* AudioRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioRecorder.swift; sourceTree = "<group>"; };
 		D05B2722C032E72F5A6FA15C /* cloud_models.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = cloud_models.json; sourceTree = "<group>"; };
+		D3B8A6F5F16BFE0F9FBDCAF0 /* NetworkProxyManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkProxyManager.swift; sourceTree = "<group>"; };
 		DB003038CE72A720D6120BCA /* PersonnelManagementView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonnelManagementView.swift; sourceTree = "<group>"; };
 		DE0A79B459AB5216AF27E37D /* DiarSharedState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiarSharedState.swift; sourceTree = "<group>"; };
 		F45B92ABE276B6BD8CDD1949 /* DiarizationServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiarizationServiceTests.swift; sourceTree = "<group>"; };
@@ -192,6 +196,7 @@
 				72D8E245A507FD55C69C590E /* IncrementalSpeakerClustering.swift */,
 				35B458292AF298F8EF6DF241 /* KeychainHelper.swift */,
 				C8832094277C1EB4D20ACE58 /* Logger.swift */,
+				D3B8A6F5F16BFE0F9FBDCAF0 /* NetworkProxyManager.swift */,
 				F78D6212479DA98D2FDA33D3 /* SettingsManager.swift */,
 				6AE27DEE54A2E83E11E3502C /* SherpaOnnxDiarizer.swift */,
 				94C95296CE1BAB1E6C22F297 /* SpeakerAlignmentService.swift */,
@@ -268,6 +273,7 @@
 				47CA492447BF5B777FA56256 /* DatabaseManagerTests.swift */,
 				F45B92ABE276B6BD8CDD1949 /* DiarizationServiceTests.swift */,
 				33412488D9DC14ABB7FFD6B6 /* HotwordPresetsTests.swift */,
+				A35FFAE4D48EEB22EDAB114B /* NetworkProxyManagerTests.swift */,
 				9BFD42D5406878F197B6D168 /* SettingsManagerTests.swift */,
 				B4479231F82FFD1F4DB64092 /* SpeakerMatcherTests.swift */,
 				602C3EC3B0DD96529085E433 /* VADGroupingTests.swift */,
@@ -448,6 +454,7 @@
 				5A89CFA75D23226A19233B22 /* MeetingListView.swift in Sources */,
 				B4B8C766FA36B9BC9A277104 /* MeetingListViewModel.swift in Sources */,
 				6E167BEFD2C233B745EFABF8 /* Models.swift in Sources */,
+				F3A05DB033AC12DA3EDC1448 /* NetworkProxyManager.swift in Sources */,
 				C088DE201C1392595600826B /* NewMeetingSheet.swift in Sources */,
 				39D0AC888ED65C6BCC25113B /* PersonnelManagementView.swift in Sources */,
 				466900115390B327450B9800 /* RecordingView.swift in Sources */,
@@ -473,6 +480,7 @@
 				8C198B945AD17FB1B24C6932 /* DatabaseManagerTests.swift in Sources */,
 				AA29E1C17942C7648F3AFB2B /* DiarizationServiceTests.swift in Sources */,
 				E977E7589167FF92F52D4DDC /* HotwordPresetsTests.swift in Sources */,
+				CD1F26E422130B227A87327F /* NetworkProxyManagerTests.swift in Sources */,
 				F58814D5148E07D251F1BE99 /* SettingsManagerTests.swift in Sources */,
 				9B3EC7ADEF3EE5927BEC17C8 /* SpeakerMatcherTests.swift in Sources */,
 				0B218AB956FCA41595DC3878 /* VADGroupingTests.swift in Sources */,
