@@ -396,7 +396,7 @@ let zhLocale: [String: String] = [
     "cloud_test_success": "连接成功",
     "cloud_test_failed": "连接失败",
     "proxy_setting_title": "网络代理",
-    "proxy_enable_custom": "自定义代理",
+    "proxy_enable_custom": "启用自定义代理",
     "proxy_test_button": "测试代理",
     "proxy_presets_label": "常用端口预设:",
     "proxy_placeholder": "如 http://127.0.0.1:7890",
@@ -793,7 +793,7 @@ let enLocale: [String: String] = [
     "cloud_test_success": "Connected successfully",
     "cloud_test_failed": "Connection failed",
     "proxy_setting_title": "Network Proxy",
-    "proxy_enable_custom": "Custom Proxy",
+    "proxy_enable_custom": "Enable Custom Proxy",
     "proxy_test_button": "Test Proxy",
     "proxy_presets_label": "Presets:",
     "proxy_placeholder": "e.g. http://127.0.0.1:7890",
@@ -1206,14 +1206,26 @@ struct SettingsView: View {
                         .fontWeight(.medium)
                         .frame(width: labelWidth, alignment: .leading)
 
-                    Toggle(loc("proxy_enable_custom"), isOn: $settings.isCustomProxyEnabled)
-                        .toggleStyle(.checkbox)
-                        .controlSize(.small)
+                    Button {
+                        settings.isCustomProxyEnabled.toggle()
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: settings.isCustomProxyEnabled ? "checkmark.square.fill" : "square")
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundStyle(settings.isCustomProxyEnabled ? Color.purple : Color.secondary)
+                            Text(loc("proxy_enable_custom"))
+                                .font(.subheadline)
+                                .foregroundStyle(settings.isCustomProxyEnabled ? Color.primary : Color.secondary)
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
 
                     TextField(loc("proxy_placeholder"), text: $settings.customProxyURL)
                         .textFieldStyle(.roundedBorder)
                         .font(.system(.caption, design: .monospaced))
                         .frame(maxWidth: 240)
+                        .opacity(settings.isCustomProxyEnabled ? 1.0 : 0.6)
                         .onChange(of: settings.customProxyURL) { _, newURL in
                             if !newURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !settings.isCustomProxyEnabled {
                                 settings.isCustomProxyEnabled = true
@@ -1235,17 +1247,28 @@ struct SettingsView: View {
 
                     // 状态微标
                     if settings.isCustomProxyEnabled {
-                        Text("已启用")
-                            .font(.caption2)
-                            .foregroundStyle(.green)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Color.green.opacity(0.12))
-                            .clipShape(Capsule())
+                        HStack(spacing: 4) {
+                            Circle().fill(Color.green).frame(width: 6, height: 6)
+                            Text("已启用")
+                                .font(.caption2)
+                                .fontWeight(.medium)
+                                .foregroundStyle(.green)
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(Color.green.opacity(0.12))
+                        .clipShape(Capsule())
                     } else {
-                        Text("跟随系统 / 直连")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
+                        HStack(spacing: 4) {
+                            Circle().fill(Color.secondary.opacity(0.6)).frame(width: 6, height: 6)
+                            Text("未启用 (跟随系统 / 直连)")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(Color.secondary.opacity(0.08))
+                        .clipShape(Capsule())
                     }
 
                     Spacer()
